@@ -15,10 +15,12 @@ type GlobeSceneProps = {
   sceneTime: Date;
 };
 
-const EARTH_COLOR = "https://threejs.org/examples/textures/planets/earth_atmos_2048.jpg";
-const EARTH_NORMAL = "https://threejs.org/examples/textures/planets/earth_normal_2048.jpg";
-const EARTH_SPECULAR = "https://threejs.org/examples/textures/planets/earth_specular_2048.jpg";
-const EARTH_CLOUDS = "https://threejs.org/examples/textures/planets/earth_clouds_1024.png";
+// Local copies live under /public/textures so the app works fully offline.
+// Sourced once from threejs.org/examples/textures/planets/ — see README attribution.
+const EARTH_COLOR = "/textures/earth_atmos_2048.jpg";
+const EARTH_NORMAL = "/textures/earth_normal_2048.jpg";
+const EARTH_SPECULAR = "/textures/earth_specular_2048.jpg";
+const EARTH_CLOUDS = "/textures/earth_clouds_1024.png";
 
 const FALLBACK_PALETTE: Record<ObjectClass, string> = {
   payload: "#22d3ee",
@@ -223,7 +225,6 @@ export default function GlobeScene({ objects, selectedId, track, onSelect, obser
     scene.add(sun);
 
     const textureLoader = new THREE.TextureLoader();
-    textureLoader.setCrossOrigin("anonymous");
 
     const earthMat = new THREE.MeshPhongMaterial({
       shininess: 12,
