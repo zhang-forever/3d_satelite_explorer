@@ -59,7 +59,7 @@ A real‑time **3D viewer for objects in Earth orbit** — satellites, rocket bo
 
 ### Getting started
 
-**Prerequisites:** Node.js **18.18+** or **20+**, and internet access (for CelesTrak data and the Earth textures hosted on `threejs.org`).
+**Prerequisites:** Node.js **18.18+** or **20+**. Internet access is needed at runtime for the CelesTrak GP API; the Earth textures ship locally under `public/textures/`.
 
 ```bash
 # install dependencies
@@ -115,7 +115,7 @@ tests/                  # cache / orbit / passes unit tests
 
 ### Data & attribution
 
-Orbital data is provided by **[CelesTrak](https://celestrak.org/)** (Dr. T.S. Kelso). Please review and respect CelesTrak's usage guidelines. Earth textures are loaded at runtime from the official Three.js examples; swap them for local assets if you need fully offline operation.
+Orbital data is provided by **[CelesTrak](https://celestrak.org/)** (Dr. T.S. Kelso). Please review and respect CelesTrak's usage guidelines. Earth textures (`public/textures/earth_atmos_2048.jpg`, `earth_normal_2048.jpg`, `earth_specular_2048.jpg`, `earth_clouds_1024.png`) are local copies of the public Three.js example assets from `threejs.org/examples/textures/planets/`.
 
 ---
 
@@ -167,7 +167,7 @@ Orbital data is provided by **[CelesTrak](https://celestrak.org/)** (Dr. T.S. Ke
 
 ### 快速开始
 
-**环境要求:** Node.js **18.18+** 或 **20+**,以及网络连接(用于获取 CelesTrak 数据和 `threejs.org` 上托管的地球贴图)。
+**环境要求:** Node.js **18.18+** 或 **20+**。运行时仅需联网访问 CelesTrak GP 接口;地球贴图已随仓库附带在 `public/textures/`。
 
 ```bash
 # 安装依赖
@@ -223,11 +223,11 @@ tests/                  # cache / orbit / passes 单元测试
 
 ### 数据与署名
 
-轨道数据来自 **[CelesTrak](https://celestrak.org/)**(Dr. T.S. Kelso)。请阅读并遵守 CelesTrak 的使用条款。地球贴图在运行时从 Three.js 官方示例加载;若需完全离线运行,可替换为本地资源。
+轨道数据来自 **[CelesTrak](https://celestrak.org/)**(Dr. T.S. Kelso)。请阅读并遵守 CelesTrak 的使用条款。地球贴图(`public/textures/earth_atmos_2048.jpg`、`earth_normal_2048.jpg`、`earth_specular_2048.jpg`、`earth_clouds_1024.png`)是 Three.js 官方示例公开素材的本地副本,源自 `threejs.org/examples/textures/planets/`。
 
 ---
 
 ## License · 许可
 
-No license file is currently included. Add one (e.g. MIT) before distribution.
-当前仓库未包含许可证文件,分发前请先添加(例如 MIT)。
+Released under the **MIT License** — see [LICENSE](./LICENSE).
+基于 **MIT 许可证** 发布,详见 [LICENSE](./LICENSE)。
