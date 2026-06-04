@@ -484,6 +484,7 @@ export default function GlobeScene({ objects, selectedId, track, onSelect, obser
         }
         mesh = next;
       }
+      // eslint-disable-next-line react-hooks/immutability
       mesh.count = needed;
     }
 
