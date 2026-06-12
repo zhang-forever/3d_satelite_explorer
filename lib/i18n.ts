@@ -95,7 +95,17 @@ export const copy = {
     removeFromWatchlist: "取消关注",
     watchlistEmpty: "未添加任何卫星",
     watchedItems: "已关注",
-    exportOmm: "导出 OMM"
+    exportOmm: "导出 OMM",
+    keyboardShortcuts: "键盘快捷键",
+    screenshot: "截图",
+    pressHelp: "按 ? 查看快捷键",
+    spacePause: "播放 / 暂停",
+    plusMinusSpeed: "调整倍速",
+    lLanguage: "切换语言",
+    selectCatalog: "选择分组",
+    close: "关闭",
+    orbitPeriod: "轨道周期",
+    name: "名称"
   },
   en: {
     appName: "Orbital Field",
@@ -191,7 +201,17 @@ export const copy = {
     removeFromWatchlist: "Remove from watchlist",
     watchlistEmpty: "No satellites watched",
     watchedItems: "Watched",
-    exportOmm: "Export OMM"
+    exportOmm: "Export OMM",
+    keyboardShortcuts: "Keyboard Shortcuts",
+    screenshot: "Screenshot",
+    pressHelp: "Press ? for shortcuts",
+    spacePause: "Play / Pause",
+    plusMinusSpeed: "Adjust speed",
+    lLanguage: "Toggle language",
+    selectCatalog: "Select catalog group",
+    close: "Close",
+    orbitPeriod: "Orbit period",
+    name: "Name"
   }
 } satisfies Record<Locale, Record<string, string>>;
 

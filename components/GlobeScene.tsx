@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CATALOGS } from "@/lib/catalogs";
@@ -13,6 +13,10 @@ type GlobeSceneProps = {
   onSelect: (id: string) => void;
   observer?: { latitudeDeg: number; longitudeDeg: number } | null;
   sceneTime: Date;
+};
+
+export type GlobeSceneHandle = {
+  takeScreenshot: () => void;
 };
 
 // Local copies live under /public/textures so the app works fully offline.
@@ -162,7 +166,21 @@ function makeRingSprite() {
   return sprite;
 }
 
-export default function GlobeScene({ objects, selectedId, track, onSelect, observer, sceneTime }: GlobeSceneProps) {
+type PopupInfo = {
+  x: number;
+  y: number;
+  name: string;
+  noradId: string;
+  altitudeKm: number;
+  speedKmS: number;
+  orbitPeriodMin: number;
+  objectType: string;
+};
+
+export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene(
+  { objects, selectedId, track, onSelect, observer, sceneTime },
+  ref
+) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<{
     camera: THREE.PerspectiveCamera;
@@ -183,6 +201,29 @@ export default function GlobeScene({ objects, selectedId, track, onSelect, obser
   useEffect(() => {
     onSelectRef.current = onSelect;
   }, [onSelect]);
+
+  const [popup, setPopup] = useState<PopupInfo | null>(null);
+  const popupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // -- expose screenshot via ref --
+  useImperativeHandle(ref, () => ({
+    takeScreenshot: () => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      try {
+        const dataUrl = canvas.toDataURL("image/png");
+        const link = document.createElement("a");
+        link.href = dataUrl;
+        link.download = `orbital-field-${new Date().toISOString().slice(0, 19).replace(/[:.]/g, "-")}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } catch {
+        // canvas tainted or not ready
+      }
+    }
+  }));
 
   const selectedObject = useMemo(
     () => objects.find((obj) => obj.id === selectedId) ?? null,
@@ -388,11 +429,32 @@ export default function GlobeScene({ objects, selectedId, track, onSelect, obser
           for (const [id, info] of current.idToIndex) {
             if (info.group === type && info.index === first.instanceId) {
               onSelectRef.current(id);
+              // Find object info for popup
+              const obj = currentObjectsRef.current.find((o) => o.id === id);
+              if (obj) {
+                const periodMin = obj.altitudeKm > 0
+                  ? 2 * Math.PI * Math.sqrt(Math.pow(6378.137 + obj.altitudeKm, 3) / 398600.4418) / 60
+                  : 0;
+                setPopup({
+                  x: event.clientX,
+                  y: event.clientY,
+                  name: obj.name,
+                  noradId: obj.noradId,
+                  altitudeKm: obj.altitudeKm,
+                  speedKmS: obj.speedKmS,
+                  orbitPeriodMin: periodMin,
+                  objectType: obj.objectType
+                });
+                if (popupTimerRef.current) clearTimeout(popupTimerRef.current);
+                popupTimerRef.current = setTimeout(() => setPopup(null), 5000);
+              }
               return;
             }
           }
         }
       }
+      // Clicked empty space – dismiss popup
+      setPopup(null);
     };
     renderer.domElement.addEventListener("pointerdown", handlePointerDown);
 
@@ -431,8 +493,12 @@ export default function GlobeScene({ objects, selectedId, track, onSelect, obser
       frame: requestAnimationFrame(animate)
     };
 
+    canvasRef.current = renderer.domElement;
+
     return () => {
       const cur = sceneRef.current;
+      canvasRef.current = null;
+      if (popupTimerRef.current) clearTimeout(popupTimerRef.current);
       resizeObserver.disconnect();
       renderer.domElement.removeEventListener("pointerdown", handlePointerDown);
       if (cur) cancelAnimationFrame(cur.frame);
@@ -529,6 +595,12 @@ export default function GlobeScene({ objects, selectedId, track, onSelect, obser
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
   }, [objects, selectedId]);
+
+  // -- keep a mutable ref of current objects for the click handler --
+  const currentObjectsRef = useRef<PropagatedObject[]>(objects);
+  useEffect(() => {
+    currentObjectsRef.current = objects;
+  }, [objects]);
 
   // ---- selection color pulse (only update colors, avoid full repopulation) ----
   const prevSelectedRef = useRef<string | null>(null);
@@ -768,6 +840,36 @@ export default function GlobeScene({ objects, selectedId, track, onSelect, obser
     <div className="globe-shell" data-testid="globe-scene">
       <div ref={hostRef} className="globe-canvas" />
       <div className="scene-vignette" />
+      {popup ? (
+        <div
+          className="sat-popup"
+          style={{ left: popup.x, top: popup.y }}
+          role="tooltip"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="sat-popup-header">{popup.name}</div>
+          <div className="sat-popup-row">
+            <span>NORAD ID</span>
+            <strong>{popup.noradId}</strong>
+          </div>
+          <div className="sat-popup-row">
+            <span>Class</span>
+            <strong>{popup.objectType}</strong>
+          </div>
+          <div className="sat-popup-row">
+            <span>Altitude</span>
+            <strong>{popup.altitudeKm.toFixed(1)} km</strong>
+          </div>
+          <div className="sat-popup-row">
+            <span>Speed</span>
+            <strong>{popup.speedKmS.toFixed(3)} km/s</strong>
+          </div>
+          <div className="sat-popup-row">
+            <span>Period</span>
+            <strong>{popup.orbitPeriodMin.toFixed(1)} min</strong>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
-}
+});

@@ -856,3 +856,117 @@ input[type="number"] {
     background: linear-gradient(0deg, rgba(3, 7, 18, 0.78), transparent 28%, rgba(3, 7, 18, 0.5));
   }
 }
+
+/* ---- Keyboard shortcuts overlay ---- */
+.shortcuts-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+}
+
+.shortcuts-panel {
+  width: 360px;
+  max-width: 90vw;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.shortcuts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.shortcuts-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.shortcuts-body {
+  padding: 12px 20px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.shortcut-row span {
+  flex: 1;
+  color: var(--text);
+}
+
+kbd {
+  display: inline-block;
+  min-width: 30px;
+  padding: 2px 8px;
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Fira Code", monospace;
+  font-size: 12px;
+  text-align: center;
+  color: var(--text);
+  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 5px;
+}
+
+/* ---- Satellite info popup ---- */
+.sat-popup {
+  position: fixed;
+  z-index: 50;
+  transform: translate(12px, -50%);
+  min-width: 200px;
+  padding: 12px 16px;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  pointer-events: auto;
+  animation: popup-in 0.15s ease-out;
+}
+
+@keyframes popup-in {
+  from { opacity: 0; transform: translate(6px, -50%) scale(0.95); }
+  to   { opacity: 1; transform: translate(12px, -50%) scale(1); }
+}
+
+.sat-popup-header {
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+  color: var(--cyan);
+}
+
+.sat-popup-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.sat-popup-row span {
+  color: var(--muted);
+}
+
+.sat-popup-row strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}

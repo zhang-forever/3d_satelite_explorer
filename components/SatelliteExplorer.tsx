@@ -9,6 +9,7 @@ import {
   Clock3,
   Database,
   Download,
+  HelpCircle,
   Languages,
   Layers,
   Loader2,
@@ -21,6 +22,7 @@ import {
   Play,
   Radar,
   RefreshCw,
+  Camera,
   Satellite,
   Search,
   SlidersHorizontal,
@@ -28,7 +30,7 @@ import {
   StarOff,
   Telescope
 } from "lucide-react";
-import GlobeScene from "@/components/GlobeScene";
+import GlobeScene, { GlobeSceneHandle } from "@/components/GlobeScene";
 import { CATALOGS, CatalogDefinition } from "@/lib/catalogs";
 import { copy, initialLocale, Locale } from "@/lib/i18n";
 import {
@@ -65,6 +67,7 @@ type AnalysisTab = "rendezvous" | "passes";
 const RENDER_LIMIT = 16000;
 const SPEEDS = [0, 1, 10, 60, 600];
 const WATCHLIST_KEY = "orbital-field:watchlist";
+const CATALOG_SHORTCUT_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "q", "w", "e", "r", "t", "y", "u"];
 
 function formatNumber(value: number, digits = 0) {
   return new Intl.NumberFormat(undefined, {
@@ -130,6 +133,8 @@ export default function SatelliteExplorer() {
   const [locationError, setLocationError] = useState<string | null>(null);
   const [workerObjects, setWorkerObjects] = useState<PropagatedObject[]>([]);
   const [watchlist, setWatchlist] = useState<string[]>([]);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const globeRef = useRef<GlobeSceneHandle>(null);
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
   const latestRequestIdRef = useRef(0);
@@ -476,6 +481,10 @@ export default function SatelliteExplorer() {
     await Promise.all(Object.keys(loadedGroups).map((groupId) => loadGroup(groupId, true)));
   };
 
+  const handleScreenshot = () => {
+    globeRef.current?.takeScreenshot();
+  };
+
   const timeOffsetHours = Math.round((sceneTime.getTime() - Date.now()) / 3_600_000);
   const displayCatalogs: CatalogSummary[] = catalogs.length
     ? catalogs
@@ -487,6 +496,52 @@ export default function SatelliteExplorer() {
         stale: true,
         error: null
       }));
+
+  // -- keyboard shortcuts --
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Don't intercept when typing in inputs
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      switch (e.key) {
+        case "?":
+          e.preventDefault();
+          setShowShortcuts((v) => !v);
+          break;
+        case " ":
+          e.preventDefault();
+          setIsPlaying((v) => !v);
+          break;
+        case "+":
+        case "=":
+          e.preventDefault();
+          setSpeedIndex((i) => Math.min(i + 1, SPEEDS.length - 1));
+          break;
+        case "-":
+        case "_":
+          e.preventDefault();
+          setSpeedIndex((i) => Math.max(i - 1, 0));
+          break;
+        case "l":
+        case "L":
+          e.preventDefault();
+          setLocale((loc) => (loc === "zh" ? "en" : "zh"));
+          break;
+        default: {
+          const idx = CATALOG_SHORTCUT_KEYS.indexOf(e.key);
+          if (idx >= 0 && idx < displayCatalogs.length) {
+            e.preventDefault();
+            const catalog = displayCatalogs[idx];
+            toggleGroup(catalog.id);
+          }
+          break;
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [displayCatalogs]);
+
   const togglePanel = (panelId: CollapsiblePanelId) => {
     setCollapsedPanels((current) => ({
       ...current,
@@ -518,7 +573,47 @@ export default function SatelliteExplorer() {
         leftRailCollapsed && "left-rail-collapsed",
         rightRailCollapsed && "right-rail-collapsed"
       )}
+      style={{ position: "relative" }}
     >
+      {showShortcuts ? (
+        <div className="shortcuts-overlay" onClick={() => setShowShortcuts(false)}>
+          <div className="shortcuts-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="shortcuts-header">
+              <h2>{t.keyboardShortcuts}</h2>
+              <button
+                className="icon-button compact"
+                type="button"
+                onClick={() => setShowShortcuts(false)}
+                title={t.close}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="shortcuts-body">
+              <div className="shortcut-row">
+                <kbd>?</kbd>
+                <span>{t.keyboardShortcuts}</span>
+              </div>
+              <div className="shortcut-row">
+                <kbd>Space</kbd>
+                <span>{t.spacePause}</span>
+              </div>
+              <div className="shortcut-row">
+                <kbd>+</kbd> / <kbd>-</kbd>
+                <span>{t.plusMinusSpeed}</span>
+              </div>
+              <div className="shortcut-row">
+                <kbd>L</kbd>
+                <span>{t.lLanguage}</span>
+              </div>
+              <div className="shortcut-row">
+                <kbd>1</kbd> – <kbd>9</kbd>
+                <span>{t.selectCatalog}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <aside className={clsx("sidebar", leftRailCollapsed && "side-collapsed")}>
         <div className="brand-row">
           <div className="brand-mark" title={t.appName}>
@@ -626,9 +721,21 @@ export default function SatelliteExplorer() {
           <button className="icon-button" type="button" onClick={() => void refreshLoaded()} title={t.refresh}>
             <RefreshCw size={18} />
           </button>
+          <button className="icon-button" type="button" onClick={handleScreenshot} title={t.screenshot}>
+            <Camera size={18} />
+          </button>
+          <button
+            className="icon-button"
+            type="button"
+            onClick={() => setShowShortcuts((v) => !v)}
+            title={t.keyboardShortcuts}
+          >
+            <HelpCircle size={18} />
+          </button>
         </div>
 
         <GlobeScene
+          ref={globeRef}
           objects={propagated}
           selectedId={selectedId}
           track={selectedTrack}

@@ -1,0 +1,10 @@
+{
+  "extends": ["next/core-web-vitals"],
+  "ignorePatterns": [".next/**", "node_modules/**", "coverage/**", ".cache/**", "dist/**", "public/textures/**"],
+  "rules": {
+    "react-hooks/exhaustive-deps": "warn",
+    "react-hooks/rules-of-hooks": "error",
+    "@next/next/no-img-element": "warn",
+    "no-console": ["warn", { "allow": ["warn", "error"] }]
+  }
+}
