@@ -1,16 +1,28 @@
-# 🛰️ Orbital Field · 轨道场
+<p align="center">
+  <img src="https://raw.githubusercontent.com/zhang-forever/3d_satelite_explorer/main/docs/screenshot.png" alt="Orbital Field — Real-time 3D Satellite Tracker" width="800">
+</p>
 
-[![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](https://nextjs.org)
-[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Three.js](https://img.shields.io/badge/Three.js-black?logo=three.js&logoColor=white)](https://threejs.org)
-[![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
+<h1 align="center">🛰️ Orbital Field · 轨道场</h1>
 
-> A real-time 3D viewer for objects in Earth orbit — satellites, rocket bodies, and debris — built with Next.js, Three.js, and SGP4 propagation. Load live catalogs from CelesTrak, watch thousands of objects propagate in real time, and run conjunction analysis right in the browser.
+<p align="center">
+  <strong>Real-time 3D tracker for 16,000+ satellites, space debris & rocket bodies — powered by live CelesTrak data, rendered in your browser.</strong>
+</p>
 
-> 一个**地球在轨物体的实时 3D 可视化应用** —— 卫星、火箭体、空间碎片 —— 基于 Next.js、Three.js 与 SGP4 轨道传播。从 CelesTrak 加载实时目录，实时传播上千个物体，并在浏览器内完成交会接近分析与地面过境预测。
+<p align="center">
+  <a href="https://github.com/zhang-forever/3d_satelite_explorer/stargazers"><img src="https://img.shields.io/github/stars/zhang-forever/3d_satelite_explorer?style=social" alt="GitHub stars"></a>
+  <a href="https://github.com/zhang-forever/3d_satelite_explorer/network"><img src="https://img.shields.io/github/forks/zhang-forever/3d_satelite_explorer?style=social" alt="GitHub forks"></a>
+  <a href="https://github.com/zhang-forever/3d_satelite_explorer/issues"><img src="https://img.shields.io/github/issues/zhang-forever/3d_satelite_explorer" alt="GitHub issues"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/zhang-forever/3d_satelite_explorer" alt="License"></a>
+  <br>
+  <a href="https://nextjs.org"><img src="https://img.shields.io/badge/Next.js-16-black?logo=next.js" alt="Next.js"></a>
+  <a href="https://react.dev"><img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React"></a>
+  <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white" alt="TypeScript"></a>
+  <a href="https://threejs.org"><img src="https://img.shields.io/badge/Three.js-black?logo=three.js&logoColor=white" alt="Three.js"></a>
+</p>
 
-**[English](#-english) · [中文](#-中文)**
+<p align="center">
+  <a href="#-english">English</a> · <a href="#-中文">中文</a> · <a href="#getting-started">Getting Started</a> · <a href="#-features">Features</a>
+</p>
 
 > ⚠️ **For visualization and education only.** Orbits use SGP4 from public TLE/OMM data and are **not** suitable for operational collision avoidance.
 >
