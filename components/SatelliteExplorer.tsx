@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import clsx from "clsx";
 import {
   AlertTriangle,
@@ -22,6 +22,7 @@ import {
   Play,
   Radar,
   RefreshCw,
+  RotateCw,
   Camera,
   Satellite,
   Search,
@@ -32,12 +33,20 @@ import {
 } from "lucide-react";
 import GlobeScene, { GlobeSceneHandle } from "@/components/GlobeScene";
 import { CATALOGS, CatalogDefinition } from "@/lib/catalogs";
+import { formatDateTime, formatDateTimeShort, formatNumber } from "@/lib/format";
 import { copy, initialLocale, Locale } from "@/lib/i18n";
 import {
   dataAgeHours,
+  dedupeByNorad,
+  objectClass,
+  ObjectClass,
+  OBJECT_CLASS_COLORS,
   OmmRecord,
   parseOmmEpoch,
+  PROPAGATION_SHADOW,
+  PROPAGATION_VALID,
   PropagatedObject,
+  quantizeDown,
   RendezvousScanHit,
   sampleOrbitTrack
 } from "@/lib/orbit";
@@ -61,30 +70,141 @@ type LoadedGroup = {
   error: string | null;
 };
 
+/** Everything the renderer needs about an object but that never changes. */
+type RecordMeta = {
+  id: string;
+  name: string;
+  objectId: string | null;
+  noradId: string;
+  epoch: string;
+  objectType: ObjectClass;
+  groupId: string;
+};
+
+type PropagationSnapshot = {
+  requestId: number;
+  version: number;
+  atMs: number;
+  scene: Float32Array;
+  ecf: Float32Array;
+  geo: Float32Array;
+  speed: Float32Array;
+  flags: Uint8Array;
+};
+
 type CollapsiblePanelId = "catalogs" | "filters" | "analysis" | "selected" | "status" | "watchlist";
 type AnalysisTab = "rendezvous" | "passes";
 
 const RENDER_LIMIT = 16000;
 const SPEEDS = [0, 1, 10, 60, 600];
-const WATCHLIST_KEY = "orbital-field:watchlist";
 const CATALOG_SHORTCUT_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "q", "w", "e", "r", "t", "y", "u"];
 
-function formatNumber(value: number, digits = 0) {
-  return new Intl.NumberFormat(undefined, {
-    maximumFractionDigits: digits,
-    minimumFractionDigits: digits
-  }).format(value);
+// localStorage keys for the persisted UI preferences.
+const WATCHLIST_KEY = "orbital-field:watchlist";
+const LOCALE_KEY = "orbital-field:locale";
+const LEFT_RAIL_KEY = "orbital-field:left-rail";
+const RIGHT_RAIL_KEY = "orbital-field:right-rail";
+const PANELS_KEY = "orbital-field:panels";
+const AUTO_ROTATE_KEY = "orbital-field:auto-rotate";
+const CLASS_FILTER_KEY = "orbital-field:class-filter";
+const SHOW_DEBRIS_KEY = "orbital-field:show-debris";
+
+// Derived-work cadence. The scene clock ticks at 1 Hz, but neither the full
+// 48 h pass list nor a freshly sampled orbit needs recomputing that often —
+// they only care about the minute / few seconds respectively.
+const TRACK_TICK_MS = 5_000;
+const PASSES_TICK_MS = 60_000;
+
+const DEFAULT_COLLAPSED_PANELS: Record<CollapsiblePanelId, boolean> = {
+  catalogs: false,
+  filters: false,
+  analysis: false,
+  selected: false,
+  status: true,
+  watchlist: false
+};
+
+/** Stable references required as `usePersistentState` defaults. */
+const EMPTY_WATCHLIST: string[] = [];
+
+const LEGEND_CLASSES: ObjectClass[] = ["payload", "debris", "rocket", "unknown"];
+
+// ---- persisted preferences ----------------------------------------------
+// A tiny localStorage-backed store exposed through `useSyncExternalStore`.
+// Reading storage during an effect and calling setState would trigger a second
+// render pass on mount (and React flags it); going through an external store
+// lets React reconcile the server snapshot with the stored value in one go.
+
+type PreferenceListener = () => void;
+
+const preferenceListeners = new Map<string, Set<PreferenceListener>>();
+const preferenceCache = new Map<string, unknown>();
+
+function readPreference<T>(key: string, fallback: T): T {
+  if (preferenceCache.has(key)) return preferenceCache.get(key) as T;
+  if (typeof window === "undefined") return fallback;
+  let value = fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw !== null) value = JSON.parse(raw) as T;
+  } catch {
+    // ignore corrupt or unavailable storage
+  }
+  preferenceCache.set(key, value);
+  return value;
 }
 
-function formatDate(date: Date) {
-  return new Intl.DateTimeFormat(undefined, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit"
-  }).format(date);
+function subscribePreference(key: string, listener: PreferenceListener) {
+  let bucket = preferenceListeners.get(key);
+  if (!bucket) {
+    bucket = new Set();
+    preferenceListeners.set(key, bucket);
+  }
+  bucket.add(listener);
+  return () => {
+    bucket.delete(listener);
+  };
+}
+
+function writePreference<T>(key: string, value: T) {
+  preferenceCache.set(key, value);
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      // storage may be full or disabled
+    }
+  }
+  preferenceListeners.get(key)?.forEach((listener) => listener());
+}
+
+/**
+ * State that survives a reload.
+ *
+ * `serverValue` is what the server renders *and* what hydration expects, so it
+ * must not depend on the browser (use "zh", not the detected language).
+ * `clientValue` is the fallback used once running in the browser when nothing
+ * was stored yet — pass a primitive only, it is part of the snapshot identity.
+ */
+function usePersistentState<T>(key: string, serverValue: T, clientValue?: T) {
+  const fallback = clientValue === undefined ? serverValue : clientValue;
+  const getSnapshot = useCallback(() => readPreference(key, fallback), [key, fallback]);
+  const getServerSnapshot = useCallback(() => serverValue, [serverValue]);
+  const subscribe = useCallback(
+    (listener: PreferenceListener) => subscribePreference(key, listener),
+    [key]
+  );
+
+  const value = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const setValue = useCallback(
+    (next: T | ((current: T) => T)) => {
+      const current = readPreference(key, fallback);
+      writePreference(key, typeof next === "function" ? (next as (input: T) => T)(current) : next);
+    },
+    [key, fallback]
+  );
+
+  return [value, setValue] as const;
 }
 
 function normalizeText(value: string) {
@@ -92,39 +212,41 @@ function normalizeText(value: string) {
 }
 
 export default function SatelliteExplorer() {
-  const [locale, setLocale] = useState<Locale>("zh");
+  // "zh" is the SSR/hydration snapshot; the browser language is only used as a
+  // client-side fallback once running, and a stored choice always wins.
+  const [locale, setLocale] = usePersistentState<Locale>(LOCALE_KEY, "zh", initialLocale());
   const t = copy[locale];
   const [catalogs, setCatalogs] = useState<CatalogSummary[]>([]);
   const [loadedGroups, setLoadedGroups] = useState<Record<string, LoadedGroup>>({});
   const [loadingGroups, setLoadingGroups] = useState<Record<string, boolean>>({});
   const [loadErrors, setLoadErrors] = useState<Record<string, string>>({});
   const [query, setQuery] = useState("");
-  const [classFilter, setClassFilter] = useState<"all" | "payload" | "debris" | "rocket" | "unknown">(
-    "all"
-  );
-  const [showDebris, setShowDebris] = useState(true);
+  const [classFilter, setClassFilter] = usePersistentState<
+    "all" | "payload" | "debris" | "rocket" | "unknown"
+  >(CLASS_FILTER_KEY, "all");
+  const [showDebris, setShowDebris] = usePersistentState(SHOW_DEBRIS_KEY, true);
   const [altitudeMin, setAltitudeMin] = useState(0);
   const [altitudeMax, setAltitudeMax] = useState(42000);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sceneTime, setSceneTime] = useState(() => new Date());
   const [isPlaying, setIsPlaying] = useState(true);
   const [speedIndex, setSpeedIndex] = useState(1);
-  const [leftRailCollapsed, setLeftRailCollapsed] = useState(false);
-  const [rightRailCollapsed, setRightRailCollapsed] = useState(false);
-  const [collapsedPanels, setCollapsedPanels] = useState<Record<CollapsiblePanelId, boolean>>({
-    catalogs: false,
-    filters: false,
-    analysis: false,
-    selected: false,
-    status: true,
-    watchlist: false
-  });
+  const [autoRotate, setAutoRotate] = usePersistentState(AUTO_ROTATE_KEY, true);
+  const [leftRailCollapsed, setLeftRailCollapsed] = usePersistentState(LEFT_RAIL_KEY, false);
+  const [rightRailCollapsed, setRightRailCollapsed] = usePersistentState(RIGHT_RAIL_KEY, false);
+  const [collapsedPanels, setCollapsedPanels] = usePersistentState<Record<CollapsiblePanelId, boolean>>(
+    PANELS_KEY,
+    DEFAULT_COLLAPSED_PANELS
+  );
   const [analysisTab, setAnalysisTab] = useState<AnalysisTab>("rendezvous");
   const [primaryQuery, setPrimaryQuery] = useState("");
   const [rendezvousWindowHours, setRendezvousWindowHours] = useState(24);
   const [rendezvousMaxMissKm, setRendezvousMaxMissKm] = useState(50);
   const [rendezvousHits, setRendezvousHits] = useState<RendezvousScanHit[]>([]);
   const [rendezvousScanning, setRendezvousScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState(0);
+  const [scanAnchor, setScanAnchor] = useState<Date | null>(null);
+  const [scanNonce, setScanNonce] = useState(0);
   const [expandedHitKey, setExpandedHitKey] = useState<string | null>(null);
   const [observerLat, setObserverLat] = useState<number>(40.0);
   const [observerLon, setObserverLon] = useState<number>(116.4);
@@ -132,17 +254,27 @@ export default function SatelliteExplorer() {
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [workerObjects, setWorkerObjects] = useState<PropagatedObject[]>([]);
-  const [watchlist, setWatchlist] = useState<string[]>([]);
+  const [watchlist, setWatchlist] = usePersistentState<string[]>(WATCHLIST_KEY, EMPTY_WATCHLIST);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const globeRef = useRef<GlobeSceneHandle>(null);
   const workerRef = useRef<Worker | null>(null);
+  // Scans run on their own worker: a 16k-object close-approach sweep takes
+  // seconds, and sharing a thread with propagation would freeze the globe.
+  const scanWorkerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
   const latestRequestIdRef = useRef(0);
   const scanRequestIdRef = useRef(0);
   const latestScanRequestIdRef = useRef(0);
+  const recordsVersionRef = useRef(0);
+  const objectPoolRef = useRef<PropagatedObject[]>([]);
+  const recordMetaRef = useRef<RecordMeta[]>([]);
+  const sceneTimeRef = useRef(sceneTime);
 
   useEffect(() => {
-    setLocale(initialLocale());
+    sceneTimeRef.current = sceneTime;
+  }, [sceneTime]);
+
+  useEffect(() => {
     fetch("/api/catalogs")
       .then((response) => response.json())
       .then((payload) => {
@@ -150,30 +282,6 @@ export default function SatelliteExplorer() {
       })
       .catch(() => setCatalogs(CATALOGS.map((catalog) => ({ ...catalog, cachedCount: 0, fetchedAt: null, sourceUpdatedAt: null, stale: true, error: null }))));
   }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = window.localStorage.getItem(WATCHLIST_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          setWatchlist(parsed.filter((item): item is string => typeof item === "string"));
-        }
-      }
-    } catch {
-      // ignore corrupt storage
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(WATCHLIST_KEY, JSON.stringify(watchlist));
-    } catch {
-      // storage may be full or disabled
-    }
-  }, [watchlist]);
 
   const toggleWatchlist = (id: string) => {
     setWatchlist((current) =>
@@ -294,28 +402,133 @@ export default function SatelliteExplorer() {
 
   const indexedRecords = useMemo(() => {
     const rows: Array<{ groupId: string; record: OmmRecord; catalog: CatalogDefinition }> = [];
-    for (const loaded of Object.values(loadedGroups)) {
+    // Walk CATALOGS rather than the object's own key order so the group that
+    // "wins" a duplicated NORAD id is deterministic regardless of the order in
+    // which the groups finished loading.
+    for (const catalog of CATALOGS) {
+      const loaded = loadedGroups[catalog.id];
+      if (!loaded) continue;
       for (const record of loaded.records) {
-        rows.push({ groupId: loaded.catalog.id, record, catalog: loaded.catalog });
+        rows.push({ groupId: catalog.id, record, catalog });
       }
     }
-    return rows;
+    return dedupeByNorad(rows);
   }, [loadedGroups]);
+
+  // Static per-object description, in exactly the same order as the record set
+  // handed to the workers — the propagation snapshot is indexed against it.
+  const recordMeta = useMemo<RecordMeta[]>(
+    () =>
+      indexedRecords.map((row) => {
+        const noradId = String(row.record.NORAD_CAT_ID);
+        return {
+          id: noradId,
+          name: row.record.OBJECT_NAME,
+          objectId: row.record.OBJECT_ID ?? null,
+          noradId,
+          epoch: row.record.EPOCH,
+          objectType: objectClass(row.record),
+          groupId: row.groupId
+        };
+      }),
+    [indexedRecords]
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const worker = new Worker(new URL("@/lib/propagationWorker.ts", import.meta.url), {
+
+    /**
+     * Turn a flat typed-array snapshot into the object list the UI consumes.
+     * Objects are reused between ticks; only the returned array identity
+     * changes, which is all React needs to observe the update.
+     */
+    const applySnapshot = (snapshot: PropagationSnapshot): PropagatedObject[] => {
+      const meta = recordMetaRef.current;
+      const pool = objectPoolRef.current;
+      const { scene, ecf, geo, speed, flags } = snapshot;
+      const total = flags.length;
+      let used = 0;
+
+      for (let i = 0; i < total; i += 1) {
+        if ((flags[i] & PROPAGATION_VALID) === 0) continue;
+        const info = meta[i];
+        if (!info) continue;
+        const i3 = i * 3;
+
+        let object = pool[used];
+        if (!object) {
+          object = {
+            id: info.id,
+            name: info.name,
+            objectId: info.objectId,
+            noradId: info.noradId,
+            epoch: info.epoch,
+            latitude: 0,
+            longitude: 0,
+            altitudeKm: 0,
+            speedKmS: 0,
+            positionKm: { x: 0, y: 0, z: 0 },
+            scene: { x: 0, y: 0, z: 0 },
+            error: null,
+            objectType: info.objectType,
+            groupId: info.groupId,
+            inShadow: false
+          };
+          pool[used] = object;
+        }
+
+        object.id = info.id;
+        object.name = info.name;
+        object.objectId = info.objectId;
+        object.noradId = info.noradId;
+        object.epoch = info.epoch;
+        object.objectType = info.objectType;
+        object.groupId = info.groupId;
+        object.latitude = geo[i3];
+        object.longitude = geo[i3 + 1];
+        object.altitudeKm = geo[i3 + 2];
+        object.speedKmS = speed[i];
+        object.scene.x = scene[i3];
+        object.scene.y = scene[i3 + 1];
+        object.scene.z = scene[i3 + 2];
+        object.positionKm.x = ecf[i3];
+        object.positionKm.y = ecf[i3 + 1];
+        object.positionKm.z = ecf[i3 + 2];
+        object.inShadow = (flags[i] & PROPAGATION_SHADOW) !== 0;
+        used += 1;
+      }
+
+      return pool.slice(0, used);
+    };
+
+    // Orbital propagation keeps ticking every second; the rendezvous sweep runs
+    // on its own worker because a full 16k-object scan takes seconds and would
+    // otherwise stall the globe for that whole time.
+    const propagateWorker = new Worker(new URL("@/lib/propagationWorker.ts", import.meta.url), {
       type: "module"
     });
-    workerRef.current = worker;
-    worker.onmessage = (event: MessageEvent) => {
+    propagateWorker.onmessage = (event: MessageEvent) => {
+      const msg = event.data as { type: "propagated" } & PropagationSnapshot;
+      if (msg.type !== "propagated") return;
+      if (msg.requestId < latestRequestIdRef.current) return;
+      // Snapshots are indexed into the worker's copy of the record set — drop
+      // any reply that belongs to a set we have already replaced.
+      if (msg.version !== recordsVersionRef.current) return;
+      latestRequestIdRef.current = msg.requestId;
+      setWorkerObjects(applySnapshot(msg));
+    };
+
+    const scanWorker = new Worker(new URL("@/lib/propagationWorker.ts", import.meta.url), {
+      type: "module"
+    });
+    scanWorker.onmessage = (event: MessageEvent) => {
       const msg = event.data as
-        | { type: "propagated"; requestId: number; objects: PropagatedObject[] }
-        | { type: "rendezvousScan"; requestId: number; hits: RendezvousScanHit[] };
-      if (msg.type === "propagated") {
-        if (msg.requestId < latestRequestIdRef.current) return;
-        latestRequestIdRef.current = msg.requestId;
-        setWorkerObjects(msg.objects);
+        | { type: "scanProgress"; requestId: number; done: number; total: number }
+        | { type: "rendezvousScan"; requestId: number; atMs: number; hits: RendezvousScanHit[] };
+
+      if (msg.type === "scanProgress") {
+        if (msg.requestId !== scanRequestIdRef.current) return;
+        setScanProgress(msg.total > 0 ? msg.done / msg.total : 1);
         return;
       }
       if (msg.type === "rendezvousScan") {
@@ -323,28 +536,45 @@ export default function SatelliteExplorer() {
         latestScanRequestIdRef.current = msg.requestId;
         setRendezvousHits(msg.hits);
         setRendezvousScanning(false);
-        return;
+        setScanProgress(1);
       }
     };
+
+    workerRef.current = propagateWorker;
+    scanWorkerRef.current = scanWorker;
+
     return () => {
-      worker.terminate();
+      propagateWorker.terminate();
+      scanWorker.terminate();
       workerRef.current = null;
+      scanWorkerRef.current = null;
     };
   }, []);
 
   useEffect(() => {
-    const worker = workerRef.current;
-    if (!worker) return;
+    recordMetaRef.current = recordMeta;
+    const propagateWorker = workerRef.current;
+    const scanWorker = scanWorkerRef.current;
+    if (!propagateWorker || !scanWorker) return;
+
+    const version = recordsVersionRef.current + 1;
+    recordsVersionRef.current = version;
     const records = indexedRecords.map((row) => ({ groupId: row.groupId, record: row.record }));
-    worker.postMessage({ type: "setRecords", records });
-  }, [indexedRecords]);
+    propagateWorker.postMessage({ type: "setRecords", version, records });
+    scanWorker.postMessage({ type: "setRecords", version, records });
+  }, [indexedRecords, recordMeta]);
 
   useEffect(() => {
     const worker = workerRef.current;
     if (!worker) return;
     const requestId = ++requestIdRef.current;
-    worker.postMessage({ type: "propagate", requestId, atMs: sceneTime.getTime() });
-  }, [sceneTime, indexedRecords]);
+    worker.postMessage({
+      type: "propagate",
+      requestId,
+      version: recordsVersionRef.current,
+      atMs: sceneTime.getTime()
+    });
+  }, [sceneTime, recordMeta]);
 
   const debrisGroupIds = useMemo(() => {
     const ids = new Set<string>();
@@ -374,10 +604,16 @@ export default function SatelliteExplorer() {
     return rows;
   }, [altitudeMax, altitudeMin, classFilter, debrisGroupIds, query, showDebris, workerObjects]);
 
-  const selectedRecord = useMemo(() => {
-    if (!selectedId) return null;
-    return indexedRecords.find((row) => String(row.record.NORAD_CAT_ID) === selectedId) ?? null;
-  }, [indexedRecords, selectedId]);
+  const recordByNorad = useMemo(() => {
+    const map = new Map<string, { groupId: string; record: OmmRecord; catalog: CatalogDefinition }>();
+    for (const row of indexedRecords) map.set(String(row.record.NORAD_CAT_ID), row);
+    return map;
+  }, [indexedRecords]);
+
+  const selectedRecord = useMemo(
+    () => (selectedId ? recordByNorad.get(selectedId) ?? null : null),
+    [recordByNorad, selectedId]
+  );
 
   const primaryCandidates = useMemo(() => {
     const needle = normalizeText(primaryQuery);
@@ -406,20 +642,25 @@ export default function SatelliteExplorer() {
     return watchlist.map((id) => map.get(id) ?? null);
   }, [watchlist, workerObjects]);
 
+  // Anchors snapped to a fixed grid: the expensive kinematics below only
+  // recompute when the grid step is crossed, not on every 1 Hz clock tick.
+  const trackAnchorMs = quantizeDown(sceneTime.getTime(), TRACK_TICK_MS);
+  const passesAnchorMs = quantizeDown(sceneTime.getTime(), PASSES_TICK_MS);
+
   const selectedTrack = useMemo(() => {
     if (!selectedRecord) return [];
-    return sampleOrbitTrack(selectedRecord.record, sceneTime, selectedRecord.groupId);
-  }, [sceneTime, selectedRecord]);
+    return sampleOrbitTrack(selectedRecord.record, new Date(trackAnchorMs), selectedRecord.groupId);
+  }, [selectedRecord, trackAnchorMs]);
 
   const passes = useMemo(() => {
     if (!selectedRecord) return [];
     return predictPasses(
       selectedRecord.record,
       { latitudeDeg: observerLat, longitudeDeg: observerLon },
-      sceneTime,
+      new Date(passesAnchorMs),
       { windowHours: 48, minElevationDeg, maxResults: 6 }
     );
-  }, [minElevationDeg, observerLat, observerLon, sceneTime, selectedRecord]);
+  }, [minElevationDeg, observerLat, observerLon, passesAnchorMs, selectedRecord]);
 
   const requestLocation = () => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
@@ -442,21 +683,27 @@ export default function SatelliteExplorer() {
     );
   };
 
+  // The sweep is anchored to the scene time captured when it starts, so it is
+  // driven by the selection / settings / explicit re-scan — never by the clock.
   useEffect(() => {
-    const worker = workerRef.current;
-    if (!worker) return;
-    if (!selectedRecord) {
+    const worker = scanWorkerRef.current;
+    if (!worker || !selectedRecord) {
       setRendezvousHits([]);
       setRendezvousScanning(false);
+      setScanProgress(0);
+      setScanAnchor(null);
       return;
     }
     const requestId = ++scanRequestIdRef.current;
+    const startedAt = sceneTimeRef.current;
     setRendezvousScanning(true);
+    setScanProgress(0);
+    setScanAnchor(startedAt);
     worker.postMessage({
       type: "scanRendezvous",
       requestId,
       primary: selectedRecord.record,
-      atMs: sceneTime.getTime(),
+      atMs: startedAt.getTime(),
       options: {
         windowHours: rendezvousWindowHours,
         stepMinutes: 5,
@@ -469,7 +716,7 @@ export default function SatelliteExplorer() {
     indexedRecords,
     rendezvousMaxMissKm,
     rendezvousWindowHours,
-    sceneTime,
+    scanNonce,
     selectedRecord
   ]);
 
@@ -485,7 +732,27 @@ export default function SatelliteExplorer() {
     globeRef.current?.takeScreenshot();
   };
 
+  const rescanRendezvous = () => setScanNonce((value) => value + 1);
+
+  const loadAllGroups = () => {
+    for (const catalog of CATALOGS) {
+      if (!loadedGroups[catalog.id] && !loadingGroups[catalog.id]) void loadGroup(catalog.id);
+    }
+  };
+
+  const unloadAllGroups = () => {
+    setLoadedGroups({});
+    setLoadErrors({});
+  };
+
+  const goLive = () => {
+    setIsPlaying(true);
+    setSpeedIndex(1);
+    setSceneTime(new Date());
+  };
+
   const timeOffsetHours = Math.round((sceneTime.getTime() - Date.now()) / 3_600_000);
+  const isLive = isPlaying && speedIndex === 1 && timeOffsetHours === 0;
   const displayCatalogs: CatalogSummary[] = catalogs.length
     ? catalogs
     : CATALOGS.map((catalog) => ({
@@ -496,8 +763,17 @@ export default function SatelliteExplorer() {
         stale: true,
         error: null
       }));
+  const loadedGroupCount = displayCatalogs.filter((catalog) => loadedGroups[catalog.id]).length;
+  const busyGroupCount = displayCatalogs.filter((catalog) => loadingGroups[catalog.id]).length;
 
   // -- keyboard shortcuts --
+  // Registered once: the handler reads the current catalog list and toggle
+  // callback through a ref, so the listener is not torn down on every render.
+  const shortcutTargetsRef = useRef({ displayCatalogs, toggleGroup });
+  useEffect(() => {
+    shortcutTargetsRef.current = { displayCatalogs, toggleGroup };
+  });
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // Don't intercept when typing in inputs
@@ -527,12 +803,22 @@ export default function SatelliteExplorer() {
           e.preventDefault();
           setLocale((loc) => (loc === "zh" ? "en" : "zh"));
           break;
+        case "a":
+        case "A":
+          e.preventDefault();
+          setAutoRotate((value) => !value);
+          break;
+        case "s":
+        case "S":
+          e.preventDefault();
+          setScanNonce((value) => value + 1);
+          break;
         default: {
+          const { displayCatalogs: current, toggleGroup: toggle } = shortcutTargetsRef.current;
           const idx = CATALOG_SHORTCUT_KEYS.indexOf(e.key);
-          if (idx >= 0 && idx < displayCatalogs.length) {
+          if (idx >= 0 && idx < current.length) {
             e.preventDefault();
-            const catalog = displayCatalogs[idx];
-            toggleGroup(catalog.id);
+            toggle(current[idx].id);
           }
           break;
         }
@@ -540,7 +826,7 @@ export default function SatelliteExplorer() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [displayCatalogs]);
+  }, [setAutoRotate, setLocale]);
 
   const togglePanel = (panelId: CollapsiblePanelId) => {
     setCollapsedPanels((current) => ({
@@ -607,6 +893,14 @@ export default function SatelliteExplorer() {
                 <span>{t.lLanguage}</span>
               </div>
               <div className="shortcut-row">
+                <kbd>A</kbd>
+                <span>{t.keyboardAutoRotate}</span>
+              </div>
+              <div className="shortcut-row">
+                <kbd>S</kbd>
+                <span>{t.keyboardRescan}</span>
+              </div>
+              <div className="shortcut-row">
                 <kbd>1</kbd> – <kbd>9</kbd>
                 <span>{t.selectCatalog}</span>
               </div>
@@ -653,9 +947,41 @@ export default function SatelliteExplorer() {
                 <span className="panel-title-main">
                   <Layers size={16} />
                   <span>{t.catalogs}</span>
+                  <small className="panel-count">
+                    {loadedGroupCount}/{displayCatalogs.length}
+                  </small>
                 </span>
-                {renderPanelToggle("catalogs", t.catalogs)}
+                <span className="panel-title-actions">
+                  <button
+                    className="mini-button"
+                    type="button"
+                    onClick={loadAllGroups}
+                    disabled={busyGroupCount > 0 || loadedGroupCount === displayCatalogs.length}
+                    title={t.loadAll}
+                  >
+                    {t.loadAll}
+                  </button>
+                  <button
+                    className="mini-button"
+                    type="button"
+                    onClick={unloadAllGroups}
+                    disabled={loadedGroupCount === 0}
+                    title={t.unloadAll}
+                  >
+                    {t.unloadAll}
+                  </button>
+                  {renderPanelToggle("catalogs", t.catalogs)}
+                </span>
               </div>
+              {busyGroupCount > 0 ? (
+                <div className="load-progress" role="status" aria-live="polite">
+                  <span
+                    className="load-progress-bar"
+                    style={{ width: `${(loadedGroupCount / displayCatalogs.length) * 100}%` }}
+                  />
+                  <small>{t.loading}</small>
+                </div>
+              ) : null}
               {!collapsedPanels.catalogs ? (
                 <div className="catalog-list">
                   {displayCatalogs.map((catalog) => {
@@ -665,9 +991,10 @@ export default function SatelliteExplorer() {
                     return (
                       <button
                         key={catalog.id}
-                        className={clsx("catalog-item", loaded && "active")}
+                        className={clsx("catalog-item", loaded && "active", loading && "pending")}
                         onClick={() => toggleGroup(catalog.id)}
                         type="button"
+                        disabled={loading}
                         title={loaded ? t.unload : t.load}
                         aria-pressed={Boolean(loaded)}
                       >
@@ -682,7 +1009,7 @@ export default function SatelliteExplorer() {
                           </span>
                           <small>{catalog.description[locale]}</small>
                         </span>
-                        <span className="catalog-meta">
+                        <span className="catalog-meta" aria-busy={Boolean(loading)}>
                           {loading ? <Loader2 className="spin" size={15} /> : loaded ? t.loaded : t.load}
                           <small>
                             {loaded?.records.length ?? catalog.cachedCount ?? 0} {t.objects}
@@ -713,8 +1040,21 @@ export default function SatelliteExplorer() {
           </div>
           <div className="metric wide">
             <Clock3 size={16} />
-            <span>{formatDate(sceneTime)}</span>
+            {/* The clock is a live wall-clock time: the server formats it in its
+                own locale/timezone and the values differ by the time hydration
+                runs. Suppressing the check here is the documented fix for
+                timestamps; the 1 Hz tick corrects the text immediately after. */}
+            <span suppressHydrationWarning>{formatDateTime(sceneTime)}</span>
           </div>
+          <button
+            className={clsx("icon-button", autoRotate && "toggled")}
+            type="button"
+            onClick={() => setAutoRotate((value) => !value)}
+            aria-pressed={autoRotate}
+            title={`${t.autoRotate} (A)`}
+          >
+            <RotateCw size={18} />
+          </button>
           <button className="icon-button" type="button" onClick={() => setLocale(locale === "zh" ? "en" : "zh")} title={t.language}>
             <Languages size={18} />
           </button>
@@ -742,7 +1082,37 @@ export default function SatelliteExplorer() {
           onSelect={setSelectedId}
           observer={{ latitudeDeg: observerLat, longitudeDeg: observerLon }}
           sceneTime={sceneTime}
+          autoRotate={autoRotate}
         />
+
+        <div className="legend" aria-label={t.legend}>
+          <span className="legend-title">{t.legend}</span>
+          <ul>
+            {LEGEND_CLASSES.map((objectClassKey) => (
+              <li key={objectClassKey}>
+                <span
+                  className="legend-dot"
+                  style={{ backgroundColor: OBJECT_CLASS_COLORS[objectClassKey] }}
+                  aria-hidden
+                />
+                {t[objectClassKey]}
+              </li>
+            ))}
+            <li className="legend-separator" aria-hidden />
+            <li>
+              <span className="legend-line amber" aria-hidden />
+              {t.orbitTrack}
+            </li>
+            <li>
+              <span className="legend-line pale" aria-hidden />
+              {t.groundTrack}
+            </li>
+            <li>
+              <span className="legend-dot observer" aria-hidden />
+              {t.observerLocation}
+            </li>
+          </ul>
+        </div>
 
         <div className="timeline">
           <button
@@ -767,7 +1137,12 @@ export default function SatelliteExplorer() {
               }}
             />
           </label>
-          <button className="text-button" type="button" onClick={() => setSceneTime(new Date())}>
+          <button
+            className={clsx("text-button", isLive && "toggled")}
+            type="button"
+            onClick={goLive}
+            aria-pressed={isLive}
+          >
             {t.now}
           </button>
           <select
@@ -833,7 +1208,7 @@ export default function SatelliteExplorer() {
                   <div className="dual-range">
                     <span>{t.altitude}</span>
                     <label>
-                      <small>min</small>
+                      <small>{t.minLabel}</small>
                       <input
                         type="number"
                         value={altitudeMin}
@@ -844,7 +1219,7 @@ export default function SatelliteExplorer() {
                       />
                     </label>
                     <label>
-                      <small>max</small>
+                      <small>{t.maxLabel}</small>
                       <input
                         type="number"
                         value={altitudeMax}
@@ -951,11 +1326,45 @@ export default function SatelliteExplorer() {
                           ))}
                         </select>
                       </label>
+                      <div className="scan-action-row">
+                        <button
+                          className="text-button scan-button"
+                          type="button"
+                          onClick={rescanRendezvous}
+                          disabled={!selectedRecord || rendezvousScanning}
+                        >
+                          {rendezvousScanning ? (
+                            <Loader2 className="spin" size={14} />
+                          ) : (
+                            <Radar size={14} />
+                          )}
+                          {rendezvousScanning ? t.rendezvousScanning : t.rescan}
+                        </button>
+                        {scanAnchor ? (
+                          <small className="scan-anchor" title={t.scanAnchor}>
+                            {formatDateTimeShort(scanAnchor)}
+                          </small>
+                        ) : null}
+                      </div>
+                      {rendezvousScanning ? (
+                        <div
+                          className="scan-progress"
+                          role="progressbar"
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={Math.round(scanProgress * 100)}
+                        >
+                          <span
+                            className="scan-progress-bar"
+                            style={{ width: `${Math.max(2, scanProgress * 100)}%` }}
+                          />
+                        </div>
+                      ) : null}
                       <div className="status-row">
                         <span>{t.scanResultsCount}</span>
                         <strong>
                           {rendezvousScanning
-                            ? t.rendezvousScanning
+                            ? `${Math.round(scanProgress * 100)}%`
                             : formatNumber(rendezvousHits.length)}
                         </strong>
                       </div>
@@ -995,7 +1404,7 @@ export default function SatelliteExplorer() {
                                   <div className="pass-row-body hit-row-body">
                                     <span>
                                       {t.closestApproach}{" "}
-                                      {new Date(hit.closestAt).toLocaleString()}
+                                      {formatDateTimeShort(hit.closestAt)}
                                     </span>
                                     {hit.closestLatitudeDeg !== null &&
                                     hit.closestLongitudeDeg !== null ? (
@@ -1076,7 +1485,7 @@ export default function SatelliteExplorer() {
                           {passes.map((pass) => (
                             <li key={pass.startAt} className="pass-row">
                               <div className="pass-row-head">
-                                <strong>{new Date(pass.startAt).toLocaleString()}</strong>
+                                <strong>{formatDateTimeShort(pass.startAt)}</strong>
                                 <span>{Math.round(pass.peakElevationDeg)} deg</span>
                               </div>
                               <div className="pass-row-body">
@@ -1149,7 +1558,7 @@ export default function SatelliteExplorer() {
                     <span>{t.classification}</span>
                     <strong>{t[selectedObject.objectType]}</strong>
                     <span>{t.epoch}</span>
-                    <strong>{parseOmmEpoch(selectedObject.epoch)?.toLocaleString() ?? "-"}</strong>
+                    <strong>{formatDateTimeShort(parseOmmEpoch(selectedObject.epoch) ?? Number.NaN)}</strong>
                     <span>{t.latitude}</span>
                     <strong>{selectedObject.latitude.toFixed(3)} deg</strong>
                     <span>{t.longitude}</span>

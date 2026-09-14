@@ -64,6 +64,28 @@
 - Bilingual UI (中文 / English), auto-detected from browser, toggleable.
 - Collapsible side rails and panels.
 
+### ⚡ Performance
+
+The scene ticks at 1 Hz over ~16k objects, so the hot paths are kept free of
+per-tick allocation:
+
+- **Struct-of-arrays propagation.** The worker propagates into reusable
+  `Float32Array` buffers (`propagateBatch`) and posts one flat snapshot per
+  tick instead of 16,000 freshly allocated objects; the main thread patches a
+  pool of plain objects in place. No GC churn on either side of the thread
+  boundary.
+- **Decoupled analysis cadence.** The 48 h pass list is recomputed at most once
+  a minute and the orbit track every 5 s — not on every clock tick. The
+  rendezvous sweep is driven by the selection/settings (or <kbd>S</kbd> / the
+  Rescan button) and reports progress, instead of restarting every second.
+- **Its own thread for scans.** A full 16k-object close-approach sweep takes
+  seconds, so it runs on a second worker and never stalls the globe.
+- **Deterministic de-duplication.** Objects listed in several catalogs
+  (Starlink is also "active") are propagated and drawn once, keyed by NORAD id.
+- **Cheaper per-frame work.** Cached `Intl` formatters, identity-seeded
+  instance matrices written as three floats, O(1) hit-testing, no
+  `preserveDrawingBuffer`, and instance buffers that start small and grow.
+
 ### Tech Stack
 
 | Layer | Choice |
@@ -130,6 +152,10 @@ ipconfig
 | `npm run lint` | Run ESLint |
 | `npm test` | Run the Vitest suite once |
 | `npm run test:watch` | Run Vitest in watch mode |
+| `npm run verify:runtime` | Headless-browser check: hydration errors, 4xx assets, console output |
+| `npm run verify:smoke` | Headless-browser smoke test: frame pacing + screenshot |
+
+> Both `verify:*` scripts target a **running** server (default `http://localhost:3123`, override with `TARGET_URL`). They drive the system Chrome via Playwright, so install its browser binary first if prompted.
 
 ### Project Structure
 
@@ -149,8 +175,10 @@ lib/
   orbit.ts              # SGP4 helpers, rendezvous & track sampling
   passes.ts             # observer pass prediction
   propagationWorker.ts  # Web Worker: propagate + rendezvous scan
+  format.ts             # cached Intl formatters (number / date-time)
   i18n.ts               # zh / en copy
 tests/                  # cache / orbit / passes unit tests
+scripts/                # headless-browser runtime verification scripts
 ```
 
 ### How It Works
@@ -217,6 +245,23 @@ Orbital data is provided by **[CelesTrak](https://celestrak.org/)** (Dr. T.S. Ke
 - 中英双语界面，根据浏览器自动识别，可手动切换。
 - 可折叠的侧栏与面板。
 
+### ⚡ 性能优化
+
+场景以 1 Hz 驱动约 1.6 万个对象，因此热路径上不再有任何「每次刷新都重新分配」的操作：
+
+- **结构化数组传播。** Worker 把结果写进可复用的 `Float32Array` 缓冲（`propagateBatch`），
+  每次心跳只投递一份扁平快照，而不是新造 16,000 个对象；主线程用对象池原地回填。
+  线程两侧都不再产生 GC 抖动。
+- **分析计算与时钟解耦。** 48 小时过境列表最快每分钟、轨道轨迹每 5 秒才重算一次，
+  不再跟着每一次时钟跳动重算。交会扫描由「选中目标 / 参数变化」触发（或按 <kbd>S</kbd>、
+  点「重新扫描」），并实时显示进度，而不是每秒从头重扫一遍。
+- **扫描独占一个线程。** 全量 1.6 万目标的接近事件扫描要跑几秒，因此放在第二个 Worker 里，
+  不会卡住地球旋转。
+- **确定性去重。** 同时出现在多个分组里的物体（Starlink 也属于「活跃物体」）按 NORAD 编号
+  只传播、只渲染一次。
+- **更省的逐帧开销。** 缓存 `Intl` 格式化器、实例矩阵一次性写入单位阵后只更新三个浮点、
+  O(1) 拾取、去掉 `preserveDrawingBuffer`、实例缓冲按需扩容。
+
 ### 技术栈
 
 | 层级 | 选型 |
@@ -282,6 +327,10 @@ ipconfig
 | `npm run lint` | 运行 ESLint |
 | `npm test` | 运行一次 Vitest 测试 |
 | `npm run test:watch` | 以监视模式运行 Vitest |
+| `npm run verify:runtime` | 无头浏览器检查：hydration 错误、404 资源、控制台输出 |
+| `npm run verify:smoke` | 无头浏览器冒烟测试：帧率 + 截图 |
+
+> 两个 `verify:*` 脚本都需要**先启动服务器**（默认 `http://localhost:3123`，可用 `TARGET_URL` 覆盖）。它们通过 Playwright 驱动系统 Chrome，首次运行若提示缺失浏览器二进制，先安装即可。
 
 ### 项目结构
 
@@ -301,8 +350,10 @@ lib/
   orbit.ts              # SGP4 辅助、交会计算与轨迹采样
   passes.ts             # 观测点过境预测
   propagationWorker.ts  # Web Worker：传播 + 交会扫描
+  format.ts             # 缓存的 Intl 格式化器（数字 / 日期时间）
   i18n.ts               # 中 / 英 文案
 tests/                  # cache / orbit / passes 单元测试
+scripts/                # 无头浏览器运行时校验脚本
 ```
 
 ### 工作原理

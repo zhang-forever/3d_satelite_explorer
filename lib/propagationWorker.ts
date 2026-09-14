@@ -1,14 +1,13 @@
 /// <reference lib="webworker" />
 
 import {
+  allocatePropagationBuffers,
   createSatrec,
-  objectClass,
-  propagateWithSatrec,
+  propagateBatch,
   scanRendezvous,
   sunDirectionEci,
-  type ObjectClass,
   type OmmRecord,
-  type PropagatedObject,
+  type PropagationBuffers,
   type RendezvousScanHit,
   type RendezvousScanOptions
 } from "@/lib/orbit";
@@ -16,8 +15,8 @@ import {
 type IndexedRecord = { groupId: string; record: OmmRecord };
 
 type InboundMessage =
-  | { type: "setRecords"; records: IndexedRecord[] }
-  | { type: "propagate"; requestId: number; atMs: number }
+  | { type: "setRecords"; version: number; records: IndexedRecord[] }
+  | { type: "propagate"; requestId: number; version: number; atMs: number }
   | {
       type: "scanRendezvous";
       requestId: number;
@@ -26,66 +25,121 @@ type InboundMessage =
       options?: RendezvousScanOptions;
     };
 
+/**
+ * Positions travel as typed arrays rather than as one object per satellite.
+ * A snapshot is a flat copy of the reusable buffers — no per-object allocation
+ * on either side of the thread boundary, no GC churn at 1 Hz.
+ */
+type PropagationSnapshot = {
+  type: "propagated";
+  requestId: number;
+  version: number;
+  atMs: number;
+  scene: Float32Array;
+  ecf: Float32Array;
+  geo: Float32Array;
+  speed: Float32Array;
+  flags: Uint8Array;
+};
+
 type OutboundMessage =
-  | {
-      type: "propagated";
-      requestId: number;
-      atMs: number;
-      objects: PropagatedObject[];
-    }
+  | PropagationSnapshot
   | {
       type: "rendezvousScan";
       requestId: number;
       atMs: number;
       hits: RendezvousScanHit[];
+    }
+  | {
+      type: "scanProgress";
+      requestId: number;
+      done: number;
+      total: number;
     };
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
+
 let records: IndexedRecord[] = [];
 let satrecs: Array<ReturnType<typeof createSatrec> | null> = [];
-let objectTypes: ObjectClass[] = [];
+let buffers: PropagationBuffers = allocatePropagationBuffers(0);
+let recordsVersion = 0;
+let satrecsStale = true;
+let lastProgressAt = 0;
 
-function rebuildSatrecs() {
-  satrecs = records.map((row) => {
+/**
+ * Parsing the record set is the expensive part of a `setRecords`, and the scan
+ * worker never propagates anything itself (`scanRendezvous` builds what it
+ * needs). Building the satrec cache lazily means only the worker that actually
+ * ticks the clock pays for it.
+ */
+function buildSatrecs() {
+  satrecs = new Array(records.length);
+  for (let i = 0; i < records.length; i += 1) {
     try {
-      return createSatrec(row.record);
+      satrecs[i] = createSatrec(records[i].record);
     } catch {
-      return null;
+      satrecs[i] = null;
     }
-  });
-  objectTypes = records.map((row) => objectClass(row.record));
+  }
+  satrecsStale = false;
+  // Grow (or shrink) the reusable sink to match the record set once, instead
+  // of allocating fresh arrays on every animation tick.
+  if (buffers.length !== records.length) {
+    buffers = allocatePropagationBuffers(records.length);
+  } else {
+    buffers.flags.fill(0);
+  }
 }
 
 ctx.addEventListener("message", (event: MessageEvent<InboundMessage>) => {
   const msg = event.data;
+
   if (msg.type === "setRecords") {
     records = msg.records;
-    rebuildSatrecs();
+    recordsVersion = msg.version;
+    satrecsStale = true;
+    satrecs = [];
     return;
   }
+
   if (msg.type === "propagate") {
+    // A stale request would index into a record set we no longer have.
+    if (msg.version !== recordsVersion) return;
+    if (satrecsStale) buildSatrecs();
+
     const at = new Date(msg.atMs);
-    const sunEci = sunDirectionEci(at);
-    const objects: PropagatedObject[] = [];
-    for (let i = 0; i < records.length; i += 1) {
-      const satrec = satrecs[i];
-      if (!satrec) continue;
-      const row = records[i];
-      const obj = propagateWithSatrec(satrec, row.record, at, row.groupId, objectTypes[i], sunEci);
-      if (obj) objects.push(obj);
-    }
-    const reply: OutboundMessage = {
+    propagateBatch(satrecs, at, buffers, sunDirectionEci(at));
+
+    const reply: PropagationSnapshot = {
       type: "propagated",
       requestId: msg.requestId,
+      version: recordsVersion,
       atMs: msg.atMs,
-      objects
+      scene: buffers.scene,
+      ecf: buffers.ecf,
+      geo: buffers.geo,
+      speed: buffers.speed,
+      flags: buffers.flags
     };
     ctx.postMessage(reply);
     return;
   }
+
   if (msg.type === "scanRendezvous") {
     const at = new Date(msg.atMs);
-    const hits = scanRendezvous(msg.primary, records, at, msg.options);
+    const hits = scanRendezvous(msg.primary, records, at, msg.options, (done, total) => {
+      // Throttle progress traffic; the UI only needs a few updates per second.
+      const now = Date.now();
+      if (done < total && now - lastProgressAt < 120) return;
+      lastProgressAt = now;
+      const progress: OutboundMessage = {
+        type: "scanProgress",
+        requestId: msg.requestId,
+        done,
+        total
+      };
+      ctx.postMessage(progress);
+    });
     const reply: OutboundMessage = {
       type: "rendezvousScan",
       requestId: msg.requestId,

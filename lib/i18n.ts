@@ -105,7 +105,21 @@ export const copy = {
     selectCatalog: "选择分组",
     close: "关闭",
     orbitPeriod: "轨道周期",
-    name: "名称"
+    name: "名称",
+    minLabel: "最小",
+    maxLabel: "最大",
+    autoRotate: "自动旋转",
+    rescan: "重新扫描",
+    scanAnchor: "扫描基准时刻",
+    legend: "图例",
+    orbitTrack: "惯性轨道",
+    groundTrack: "星下点轨迹",
+    footprint: "覆盖圈",
+    terminator: "晨昏线",
+    loadAll: "全部加载",
+    unloadAll: "全部卸载",
+    keyboardAutoRotate: "自动旋转开关",
+    keyboardRescan: "重新扫描交会"
   },
   en: {
     appName: "Orbital Field",
@@ -211,7 +225,21 @@ export const copy = {
     selectCatalog: "Select catalog group",
     close: "Close",
     orbitPeriod: "Orbit period",
-    name: "Name"
+    name: "Name",
+    minLabel: "Min",
+    maxLabel: "Max",
+    autoRotate: "Auto-rotate",
+    rescan: "Rescan",
+    scanAnchor: "Scan epoch",
+    legend: "Legend",
+    orbitTrack: "Inertial orbit",
+    groundTrack: "Ground track",
+    footprint: "Footprint",
+    terminator: "Terminator",
+    loadAll: "Load all",
+    unloadAll: "Unload all",
+    keyboardAutoRotate: "Toggle auto-rotate",
+    keyboardRescan: "Re-run rendezvous scan"
   }
 } satisfies Record<Locale, Record<string, string>>;
 

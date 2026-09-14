@@ -9,7 +9,9 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "verify:smoke": "node scripts/smoke-check.cjs",
+    "verify:runtime": "node scripts/verify-runtime.cjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

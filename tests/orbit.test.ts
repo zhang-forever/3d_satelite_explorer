@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  allocatePropagationBuffers,
   altitudeRangeKm,
   calculateRendezvous,
+  createSatrec,
   dataAgeHours,
+  dedupeByNorad,
   objectClass,
   orbitalPeriodMinutes,
+  PROPAGATION_VALID,
+  propagateBatch,
   propagateOmm,
+  quantizeDown,
   sampleOrbitTrack,
   scanRendezvous
 } from "@/lib/orbit";
@@ -140,5 +146,77 @@ describe("orbit utilities", () => {
 
     expect(hits.length).toBe(1);
     expect(hits[0].noradId).toBe("99999");
+  });
+
+  it("reports scan progress against the secondary count", () => {
+    const twin: OmmRecord = { ...iss, OBJECT_NAME: "ISS TWIN", NORAD_CAT_ID: 99999 };
+    const seen: Array<[number, number]> = [];
+
+    scanRendezvous(
+      iss,
+      [{ groupId: "stations", record: twin }],
+      new Date("2026-04-28T05:00:00.000Z"),
+      { windowHours: 1, stepMinutes: 5, refinementSeconds: 30, hitMaxDistanceKm: 50 },
+      (done, total) => seen.push([done, total])
+    );
+
+    expect(seen.at(-1)).toEqual([1, 1]);
+  });
+
+  it("dedupes rows that share a NORAD id, keeping the first occurrence", () => {
+    const rows = [
+      { groupId: "active", record: iss },
+      { groupId: "starlink", record: { ...iss } },
+      { groupId: "stations", record: { ...iss, NORAD_CAT_ID: 36086, OBJECT_NAME: "POISK" } }
+    ];
+
+    const unique = dedupeByNorad(rows);
+
+    expect(unique).toHaveLength(2);
+    expect(unique[0].groupId).toBe("active");
+    expect(unique[1].record.NORAD_CAT_ID).toBe(36086);
+  });
+
+  it("snaps timestamps down to a fixed grid", () => {
+    expect(quantizeDown(12_345, 5_000)).toBe(10_000);
+    expect(quantizeDown(10_000, 5_000)).toBe(10_000);
+    expect(quantizeDown(14_999, 5_000)).toBe(10_000);
+    expect(quantizeDown(15_000, 5_000)).toBe(15_000);
+    expect(Number.isNaN(quantizeDown(Number.NaN, 5_000))).toBe(true);
+  });
+
+  it("propagates a set into reusable buffers, matching the single-object path", () => {
+    const at = new Date("2026-04-28T05:00:00.000Z");
+    const twin: OmmRecord = { ...iss, OBJECT_NAME: "ISS TWIN", NORAD_CAT_ID: 99999 };
+    const satrecs = [createSatrec(iss), createSatrec(twin), null];
+    const sink = allocatePropagationBuffers(satrecs.length);
+
+    const valid = propagateBatch(satrecs, at, sink);
+    const single = propagateOmm(iss, at, "stations");
+
+    expect(valid).toBe(2);
+    expect(sink.flags[2]).toBe(0);
+    expect(sink.flags[0] & PROPAGATION_VALID).toBe(PROPAGATION_VALID);
+    expect(single).not.toBeNull();
+    expect(sink.geo[0]).toBeCloseTo(single!.latitude, 3);
+    expect(sink.geo[1]).toBeCloseTo(single!.longitude, 3);
+    expect(sink.geo[2]).toBeCloseTo(single!.altitudeKm, 1);
+    expect(sink.speed[0]).toBeCloseTo(single!.speedKmS, 3);
+    expect(sink.scene[0]).toBeCloseTo(single!.scene.x, 5);
+    expect(sink.scene[1]).toBeCloseTo(single!.scene.y, 5);
+    expect(sink.scene[2]).toBeCloseTo(single!.scene.z, 5);
+    expect(sink.ecf[0]).toBeCloseTo(single!.positionKm.x, 2);
+  });
+
+  it("clears stale flags when the same buffers are reused", () => {
+    const at = new Date("2026-04-28T05:00:00.000Z");
+    const sink = allocatePropagationBuffers(2);
+    sink.flags[1] = PROPAGATION_VALID;
+    sink.flags[0] = PROPAGATION_VALID;
+
+    propagateBatch([createSatrec(iss), null], at, sink);
+
+    expect(sink.flags[0] & PROPAGATION_VALID).toBe(PROPAGATION_VALID);
+    expect(sink.flags[1]).toBe(0);
   });
 });

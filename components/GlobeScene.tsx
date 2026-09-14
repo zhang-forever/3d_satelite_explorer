@@ -4,7 +4,12 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CATALOGS } from "@/lib/catalogs";
-import type { ObjectClass, PropagatedObject } from "@/lib/orbit";
+import {
+  OBJECT_CLASS_COLORS,
+  sunDirectionEci,
+  type ObjectClass,
+  type PropagatedObject
+} from "@/lib/orbit";
 
 type GlobeSceneProps = {
   objects: PropagatedObject[];
@@ -13,6 +18,7 @@ type GlobeSceneProps = {
   onSelect: (id: string) => void;
   observer?: { latitudeDeg: number; longitudeDeg: number } | null;
   sceneTime: Date;
+  autoRotate?: boolean;
 };
 
 export type GlobeSceneHandle = {
@@ -26,22 +32,30 @@ const EARTH_NORMAL = "/textures/earth_normal_2048.jpg";
 const EARTH_SPECULAR = "/textures/earth_specular_2048.jpg";
 const EARTH_CLOUDS = "/textures/earth_clouds_1024.png";
 
-const FALLBACK_PALETTE: Record<ObjectClass, string> = {
-  payload: "#22d3ee",
-  debris: "#ef4444",
-  rocket: "#c084fc",
-  unknown: "#94a3b8"
-};
-
 const GROUP_COLOR: Record<string, string> = Object.fromEntries(
   CATALOGS.map((catalog) => [catalog.id, catalog.color])
 );
 
 function colorFor(obj: PropagatedObject) {
-  return GROUP_COLOR[obj.groupId] ?? FALLBACK_PALETTE[obj.objectType];
+  return GROUP_COLOR[obj.groupId] ?? OBJECT_CLASS_COLORS[obj.objectType];
 }
 
 const SELECTED_COLOR = "#fbbf24";
+const SHADOW_DIM = 0.32;
+const EARTH_MU = 398600.4418;
+const EARTH_RADIUS_KM = 6378.137;
+
+/** Capacity is grown on demand — no point reserving 10k instances per class. */
+const INITIAL_CAPACITY = 1024;
+const CLICK_SLOP_PX = 5;
+
+type InstancedIndexEntry = {
+  group: ObjectClass;
+  index: number;
+  baseColor: string;
+  inShadow: boolean;
+  object: PropagatedObject;
+};
 
 // -- tiny geometry factories for each object type --
 
@@ -114,28 +128,47 @@ const GEOMETRIES: Record<ObjectClass, THREE.BufferGeometry> = {
 
 type InstancedGroups = Record<ObjectClass, THREE.InstancedMesh>;
 
+const OBJECT_CLASSES: ObjectClass[] = ["payload", "debris", "rocket", "unknown"];
+
+/**
+ * Instances are never rotated or scaled, so their matrices stay the identity
+ * with a translated origin. Seeding the identity once per allocation lets the
+ * per-tick loop write three floats instead of composing a full matrix.
+ */
+function seedIdentityMatrices(mesh: THREE.InstancedMesh) {
+  const array = mesh.instanceMatrix.array as Float32Array;
+  for (let i = 0; i < mesh.instanceMatrix.count; i += 1) {
+    const base = i * 16;
+    array[base] = 1;
+    array[base + 5] = 1;
+    array[base + 10] = 1;
+    array[base + 15] = 1;
+  }
+}
+
 function createGroup(type: ObjectClass, capacity: number) {
-  const mat = new THREE.MeshLambertMaterial({ color: FALLBACK_PALETTE[type] });
+  const mat = new THREE.MeshLambertMaterial({ color: OBJECT_CLASS_COLORS[type] });
   const mesh = new THREE.InstancedMesh(GEOMETRIES[type], mat, capacity);
   mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   mesh.count = 0;
   mesh.frustumCulled = false;
+  seedIdentityMatrices(mesh);
   return mesh;
 }
 
-function ensureCapacity(
-  mesh: THREE.InstancedMesh,
-  needed: number
-): THREE.InstancedMesh {
-  const max = mesh.instanceMatrix.count;
-  if (needed <= max) return mesh;
-  const newCap = Math.max(needed, max * 2);
-  const geo = mesh.geometry;
-  const mat = (mesh.material as THREE.Material).clone();
-  const next = new THREE.InstancedMesh(geo, mat, newCap);
+function ensureCapacity(mesh: THREE.InstancedMesh, needed: number) {
+  const current = mesh.instanceMatrix.count;
+  if (needed <= current) return mesh;
+
+  const next = new THREE.InstancedMesh(
+    mesh.geometry,
+    (mesh.material as THREE.Material).clone(),
+    Math.max(needed, current * 2)
+  );
   next.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   next.frustumCulled = false;
   next.count = 0;
+  seedIdentityMatrices(next);
   return next;
 }
 
@@ -166,28 +199,26 @@ function makeRingSprite() {
   return sprite;
 }
 
-type PopupInfo = {
-  x: number;
-  y: number;
-  name: string;
-  noradId: string;
-  altitudeKm: number;
-  speedKmS: number;
-  orbitPeriodMin: number;
-  objectType: string;
-};
+function orbitalPeriodMinutes(altitudeKm: number) {
+  if (!Number.isFinite(altitudeKm) || altitudeKm <= 0) return 0;
+  const a = EARTH_RADIUS_KM + altitudeKm;
+  return (2 * Math.PI * Math.sqrt((a * a * a) / EARTH_MU)) / 60;
+}
 
 export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene(
-  { objects, selectedId, track, onSelect, observer, sceneTime },
+  { objects, selectedId, track, onSelect, observer, sceneTime, autoRotate = true },
   ref
 ) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<{
+    scene: THREE.Scene;
     camera: THREE.PerspectiveCamera;
     renderer: THREE.WebGLRenderer;
     controls: OrbitControls;
     groups: InstancedGroups;
-    idToIndex: Map<string, { group: ObjectClass; index: number; baseColor: string; inShadow: boolean }>;
+    idToIndex: Map<string, InstancedIndexEntry>;
+    /** Reverse of `idToIndex`: instance id per class, for O(1) picking. */
+    pickIds: Record<ObjectClass, string[]>;
     selectedSprite: THREE.Sprite;
     trackLine: THREE.Line;
     cloudMesh: THREE.Mesh;
@@ -202,17 +233,31 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
     onSelectRef.current = onSelect;
   }, [onSelect]);
 
-  const [popup, setPopup] = useState<PopupInfo | null>(null);
-  const popupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // `popupId` is the only popup state kept in React — the displayed values are
+  // read from the live object so they keep ticking while the popup is open.
+  const [popupId, setPopupId] = useState<string | null>(null);
+  const popupIdRef = useRef<string | null>(null);
+  const popupElementRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    popupIdRef.current = popupId;
+  }, [popupId]);
+
+  const popupObject = useMemo(
+    () => (popupId ? objects.find((obj) => obj.id === popupId) ?? null : null),
+    [objects, popupId]
+  );
 
   // -- expose screenshot via ref --
   useImperativeHandle(ref, () => ({
     takeScreenshot: () => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
+      const current = sceneRef.current;
+      if (!current) return;
+      // `preserveDrawingBuffer` is off (it costs a full extra copy every
+      // frame); rendering right before reading keeps the buffer valid.
+      current.renderer.render(current.scene, current.camera);
       try {
-        const dataUrl = canvas.toDataURL("image/png");
+        const dataUrl = current.renderer.domElement.toDataURL("image/png");
         const link = document.createElement("a");
         link.href = dataUrl;
         link.download = `orbital-field-${new Date().toISOString().slice(0, 19).replace(/[:.]/g, "-")}.png`;
@@ -220,7 +265,7 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
         link.click();
         document.body.removeChild(link);
       } catch {
-        // canvas tainted or not ready
+        // canvas not ready
       }
     }
   }));
@@ -244,7 +289,7 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
       alpha: false,
-      preserveDrawingBuffer: true
+      powerPreference: "high-performance"
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(host.clientWidth, host.clientHeight);
@@ -256,7 +301,7 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
     controls.dampingFactor = 0.06;
     controls.minDistance = 1.35;
     controls.maxDistance = 14;
-    controls.autoRotate = true;
+    controls.autoRotate = autoRotate;
     controls.autoRotateSpeed = 0.18;
 
     const ambient = new THREE.AmbientLight("#9db7ff", 0.65);
@@ -344,15 +389,21 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
     );
 
     // instanced groups
-    const INITIAL_CAP = 10000;
     const groups: InstancedGroups = {
-      payload: createGroup("payload", INITIAL_CAP),
-      debris: createGroup("debris", INITIAL_CAP),
-      rocket: createGroup("rocket", INITIAL_CAP),
-      unknown: createGroup("unknown", INITIAL_CAP)
+      payload: createGroup("payload", INITIAL_CAPACITY),
+      debris: createGroup("debris", INITIAL_CAPACITY),
+      rocket: createGroup("rocket", INITIAL_CAPACITY),
+      unknown: createGroup("unknown", INITIAL_CAPACITY)
     };
     for (const g of Object.values(groups)) scene.add(g);
-    const idToIndex = new Map<string, { group: ObjectClass; index: number; baseColor: string; inShadow: boolean }>();
+
+    const idToIndex = new Map<string, InstancedIndexEntry>();
+    const pickIds: Record<ObjectClass, string[]> = {
+      payload: [],
+      debris: [],
+      rocket: [],
+      unknown: []
+    };
 
     // track line
     const trackGeo = new THREE.BufferGeometry();
@@ -360,6 +411,7 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
       trackGeo,
       new THREE.LineBasicMaterial({ color: "#fbbf24", transparent: true, opacity: 0.92 })
     );
+    trackLine.frustumCulled = false;
     scene.add(trackLine);
 
     // selection sprite
@@ -385,6 +437,7 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
       footprintGeo,
       new THREE.LineBasicMaterial({ color: "#fbbf24", transparent: true, opacity: 0.7 })
     );
+    footprintLine.frustumCulled = false;
     footprintLine.visible = false;
     scene.add(footprintLine);
 
@@ -394,6 +447,7 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
       groundTrackGeo,
       new THREE.LineBasicMaterial({ color: "#fde68a", transparent: true, opacity: 0.85 })
     );
+    groundTrackLine.frustumCulled = false;
     groundTrackLine.visible = false;
     scene.add(groundTrackLine);
 
@@ -408,55 +462,62 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
       terminatorGeo,
       new THREE.LineBasicMaterial({ color: "#fbbf24", transparent: true, opacity: 0.45 })
     );
+    terminatorLine.frustumCulled = false;
     scene.add(terminatorLine);
 
-    // raycasting
+    // -- picking: press/release pair so orbiting the globe does not select --
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
-    const handlePointerDown = (event: PointerEvent) => {
+    let pressedAt: { x: number; y: number } | null = null;
+
+    const pickAt = (clientX: number, clientY: number) => {
       const current = sceneRef.current;
-      if (!current) return;
+      if (!current) return null;
       const rect = renderer.domElement.getBoundingClientRect();
-      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      if (rect.width === 0 || rect.height === 0) return null;
+      pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
       const hits = raycaster.intersectObjects(Object.values(current.groups), false);
       const first = hits[0];
-      if (first?.instanceId !== undefined) {
-        const mesh = first.object as THREE.InstancedMesh;
-        for (const [type, group] of Object.entries(current.groups) as [ObjectClass, THREE.InstancedMesh][]) {
-          if (group !== mesh) continue;
-          for (const [id, info] of current.idToIndex) {
-            if (info.group === type && info.index === first.instanceId) {
-              onSelectRef.current(id);
-              // Find object info for popup
-              const obj = currentObjectsRef.current.find((o) => o.id === id);
-              if (obj) {
-                const periodMin = obj.altitudeKm > 0
-                  ? 2 * Math.PI * Math.sqrt(Math.pow(6378.137 + obj.altitudeKm, 3) / 398600.4418) / 60
-                  : 0;
-                setPopup({
-                  x: event.clientX,
-                  y: event.clientY,
-                  name: obj.name,
-                  noradId: obj.noradId,
-                  altitudeKm: obj.altitudeKm,
-                  speedKmS: obj.speedKmS,
-                  orbitPeriodMin: periodMin,
-                  objectType: obj.objectType
-                });
-                if (popupTimerRef.current) clearTimeout(popupTimerRef.current);
-                popupTimerRef.current = setTimeout(() => setPopup(null), 5000);
-              }
-              return;
-            }
-          }
-        }
-      }
-      // Clicked empty space – dismiss popup
-      setPopup(null);
+      if (first?.instanceId === undefined) return null;
+      const type = (Object.entries(current.groups) as [ObjectClass, THREE.InstancedMesh][]).find(
+        ([, mesh]) => mesh === first.object
+      )?.[0];
+      if (!type) return null;
+      const id = current.pickIds[type][first.instanceId];
+      if (!id) return null;
+      return current.idToIndex.get(id)?.object ?? null;
     };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      pressedAt = { x: event.clientX, y: event.clientY };
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+      const start = pressedAt;
+      pressedAt = null;
+      if (!start) return;
+      // A drag is a camera move, not a selection.
+      if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > CLICK_SLOP_PX) return;
+
+      const object = pickAt(event.clientX, event.clientY);
+      if (object) {
+        onSelectRef.current(object.id);
+        setPopupId(object.id);
+        return;
+      }
+      // Clicked empty space — dismiss the popup.
+      setPopupId(null);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPopupId(null);
+    };
+
     renderer.domElement.addEventListener("pointerdown", handlePointerDown);
+    renderer.domElement.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("keydown", handleKeyDown);
 
     const resizeObserver = new ResizeObserver(() => {
       if (!host.clientWidth || !host.clientHeight) return;
@@ -466,11 +527,31 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
     });
     resizeObserver.observe(host);
 
+    // Scratch objects reused every frame — no allocation inside the loop.
+    const projected = new THREE.Vector3();
+
     const animate = () => {
       controls.update();
       earth.rotation.y += 0.00035;
       cloudMesh.rotation.y += 0.00055;
       atmosphere.rotation.y += 0.00025;
+
+      // Keep the info popup glued to its object.
+      const popupElement = popupElementRef.current;
+      const activePopupId = popupIdRef.current;
+      if (popupElement && activePopupId) {
+        const entry = idToIndex.get(activePopupId);
+        if (entry) {
+          projected.set(entry.object.scene.x, entry.object.scene.y, entry.object.scene.z);
+          projected.project(camera);
+          const rect = renderer.domElement.getBoundingClientRect();
+          const x = rect.left + (projected.x * 0.5 + 0.5) * rect.width;
+          const y = rect.top + (-projected.y * 0.5 + 0.5) * rect.height;
+          popupElement.style.transform = `translate(${x}px, ${y}px)`;
+          popupElement.style.visibility = projected.z > 1 ? "hidden" : "visible";
+        }
+      }
+
       renderer.render(scene, camera);
       if (sceneRef.current) {
         sceneRef.current.frame = requestAnimationFrame(animate);
@@ -478,11 +559,13 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
     };
 
     sceneRef.current = {
+      scene,
       camera,
       renderer,
       controls,
       groups,
       idToIndex,
+      pickIds,
       selectedSprite,
       trackLine,
       cloudMesh,
@@ -493,16 +576,18 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
       frame: requestAnimationFrame(animate)
     };
 
-    canvasRef.current = renderer.domElement;
-
     return () => {
       const cur = sceneRef.current;
-      canvasRef.current = null;
-      if (popupTimerRef.current) clearTimeout(popupTimerRef.current);
       resizeObserver.disconnect();
       renderer.domElement.removeEventListener("pointerdown", handlePointerDown);
+      renderer.domElement.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("keydown", handleKeyDown);
       if (cur) cancelAnimationFrame(cur.frame);
       controls.dispose();
+      earthMat.dispose();
+      earth.geometry.dispose();
+      atmosphere.geometry.dispose();
+      (atmosphere.material as THREE.Material).dispose();
       for (const g of Object.values(groups)) {
         (g.material as THREE.Material).dispose();
       }
@@ -510,145 +595,150 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
       footprintGeo.dispose();
       groundTrackGeo.dispose();
       terminatorGeo.dispose();
+      starsGeo.dispose();
       cloudMesh.geometry.dispose();
       cloudMat.dispose();
       observerGeo.dispose();
       observerMat.dispose();
+      (selectedSprite.material as THREE.SpriteMaterial).map?.dispose();
+      (selectedSprite.material as THREE.SpriteMaterial).dispose();
       renderer.dispose();
       host.removeChild(renderer.domElement);
       sceneRef.current = null;
     };
+    // `autoRotate` is applied by its own effect below; the scene is built once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---- place instances whenever objects list changes ----
+  // ---- auto-rotate toggle ----
+  useEffect(() => {
+    const cur = sceneRef.current;
+    if (!cur) return;
+    cur.controls.autoRotate = autoRotate;
+  }, [autoRotate]);
+
+  // ---- place instances whenever the object list changes ----
   useEffect(() => {
     const cur = sceneRef.current;
     if (!cur) return;
 
     let { groups } = cur;
-    const { idToIndex } = cur;
+    const { idToIndex, pickIds } = cur;
     idToIndex.clear();
+    for (const type of OBJECT_CLASSES) pickIds[type].length = 0;
 
     // count per type & ensure capacity
-    const counts = { payload: 0, debris: 0, rocket: 0, unknown: 0 };
-    for (const obj of objects) counts[obj.objectType]++;
+    const counts: Record<ObjectClass, number> = { payload: 0, debris: 0, rocket: 0, unknown: 0 };
+    for (const obj of objects) counts[obj.objectType] += 1;
 
-    for (const type of Object.keys(groups) as ObjectClass[]) {
+    for (const type of OBJECT_CLASSES) {
       const needed = counts[type];
       let mesh = groups[type];
       if (needed > mesh.instanceMatrix.count) {
-        // reallocate with larger buffer
         const old = mesh;
         const next = ensureCapacity(old, needed);
         if (next !== old) {
-          const oldParent = old.parent;
+          const parent = old.parent;
           old.removeFromParent();
           (old.material as THREE.Material).dispose();
-          oldParent?.add(next);
+          parent?.add(next);
           groups = { ...groups, [type]: next };
           cur.groups = groups;
         }
         mesh = next;
       }
-      // eslint-disable-next-line react-hooks/immutability
       mesh.count = needed;
     }
 
-    const dummy = new THREE.Object3D();
-    const indices: Record<string, number> = { payload: 0, debris: 0, rocket: 0, unknown: 0 };
     const reusableColor = new THREE.Color();
-    const selColor = new THREE.Color(SELECTED_COLOR);
+    const selectedColor = new THREE.Color(SELECTED_COLOR);
 
     for (const obj of objects) {
       const type = obj.objectType;
-      const idx = indices[type];
       const mesh = groups[type];
-      if (idx >= mesh.instanceMatrix.count) continue;
+      // `pickIds[type].length` doubles as the next instance slot.
+      const index = pickIds[type].length;
+      if (index >= mesh.instanceMatrix.count) continue;
+
+      // Position only: the identity part of the matrix was seeded once when the
+      // buffer was allocated, so three floats per instance are enough.
+      const array = mesh.instanceMatrix.array as Float32Array;
+      const base = index * 16;
+      array[base + 12] = obj.scene.x;
+      array[base + 13] = obj.scene.y;
+      array[base + 14] = obj.scene.z;
 
       const baseHex = colorFor(obj);
-      dummy.position.set(obj.scene.x, obj.scene.y, obj.scene.z);
-      dummy.scale.setScalar(1);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(idx, dummy.matrix);
       if (obj.id === selectedId) {
-        mesh.setColorAt(idx, selColor);
+        mesh.setColorAt(index, selectedColor);
       } else {
         reusableColor.set(baseHex);
-        if (obj.inShadow) reusableColor.multiplyScalar(0.32);
-        mesh.setColorAt(idx, reusableColor);
+        if (obj.inShadow) reusableColor.multiplyScalar(SHADOW_DIM);
+        mesh.setColorAt(index, reusableColor);
       }
-      idToIndex.set(obj.id, { group: type, index: idx, baseColor: baseHex, inShadow: obj.inShadow });
-      indices[type]++;
+
+      pickIds[type][index] = obj.id;
+      idToIndex.set(obj.id, {
+        group: type,
+        index,
+        baseColor: baseHex,
+        inShadow: obj.inShadow,
+        object: obj
+      });
     }
 
-    // hide unused slots
-    dummy.scale.setScalar(0.01);
-    for (const type of Object.keys(groups) as ObjectClass[]) {
+    for (const type of OBJECT_CLASSES) {
       const mesh = groups[type];
-      const used = indices[type];
-      for (let i = used; i < mesh.count; i++) {
-        dummy.position.set(0, 0, -999);
-        dummy.updateMatrix();
-        mesh.setMatrixAt(i, dummy.matrix);
-      }
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
   }, [objects, selectedId]);
 
-  // -- keep a mutable ref of current objects for the click handler --
-  const currentObjectsRef = useRef<PropagatedObject[]>(objects);
-  useEffect(() => {
-    currentObjectsRef.current = objects;
-  }, [objects]);
-
-  // ---- selection color pulse (only update colors, avoid full repopulation) ----
+  // ---- selection highlight (patches instance colours in place) ----
   const prevSelectedRef = useRef<string | null>(null);
   useEffect(() => {
     const cur = sceneRef.current;
     if (!cur) return;
     const { groups, idToIndex } = cur;
-    const selColor = new THREE.Color(SELECTED_COLOR);
+    const selectedColor = new THREE.Color(SELECTED_COLOR);
     const reusableColor = new THREE.Color();
 
-    // restore previous selection
     if (prevSelectedRef.current && prevSelectedRef.current !== selectedId) {
       const prev = idToIndex.get(prevSelectedRef.current);
       if (prev) {
         reusableColor.set(prev.baseColor);
-        if (prev.inShadow) reusableColor.multiplyScalar(0.32);
+        if (prev.inShadow) reusableColor.multiplyScalar(SHADOW_DIM);
         groups[prev.group].setColorAt(prev.index, reusableColor);
       }
     }
-    // apply new selection
     if (selectedId) {
       const info = idToIndex.get(selectedId);
-      if (info) groups[info.group].setColorAt(info.index, selColor);
+      if (info) groups[info.group].setColorAt(info.index, selectedColor);
     }
     prevSelectedRef.current = selectedId;
 
-    for (const g of Object.values(groups)) {
-      if (g.instanceColor) g.instanceColor.needsUpdate = true;
+    for (const type of OBJECT_CLASSES) {
+      const mesh = groups[type];
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
-  }, [selectedId, objects, sceneRef]);
+  }, [selectedId, objects]);
 
   // ---- track line ----
   useEffect(() => {
     const cur = sceneRef.current;
     if (!cur) return;
     if (!track.length) {
-      cur.trackLine.geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(), 3));
       cur.trackLine.visible = false;
       return;
     }
     const positions = new Float32Array(track.length * 3);
-    track.forEach((p, i) => {
-      positions[i * 3] = p.scene.x;
-      positions[i * 3 + 1] = p.scene.y;
-      positions[i * 3 + 2] = p.scene.z;
-    });
+    for (let i = 0; i < track.length; i += 1) {
+      const point = track[i].scene;
+      positions[i * 3] = point.x;
+      positions[i * 3 + 1] = point.y;
+      positions[i * 3 + 2] = point.z;
+    }
     cur.trackLine.geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    cur.trackLine.geometry.computeBoundingSphere();
     cur.trackLine.visible = true;
   }, [track]);
 
@@ -695,7 +785,7 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
       cur.footprintLine.visible = false;
       return;
     }
-    const R = 6378.137;
+    const R = EARTH_RADIUS_KM;
     const h = Math.max(selectedObject.altitudeKm, 1);
     const halfAngle = Math.acos(R / (R + h));
     const lat = (selectedObject.latitude * Math.PI) / 180;
@@ -712,7 +802,7 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
     let uLen = Math.hypot(ux, uy, uz);
     if (uLen < 1e-6) {
       ux = 1; uy = 0; uz = 0;
-      const d = cx * 1 + cy * 0 + cz * 0;
+      const d = cx;
       ux -= d * cx; uy -= d * cy; uz -= d * cz;
       uLen = Math.hypot(ux, uy, uz);
     }
@@ -736,7 +826,6 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
       positions.setXYZ(i, x * r, y * r, z * r);
     }
     positions.needsUpdate = true;
-    cur.footprintLine.geometry.computeBoundingSphere();
     cur.footprintLine.visible = true;
   }, [selectedObject]);
 
@@ -762,7 +851,6 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
       "position",
       new THREE.BufferAttribute(positions, 3)
     );
-    cur.groundTrackLine.geometry.computeBoundingSphere();
     cur.groundTrackLine.visible = true;
   }, [track]);
 
@@ -770,50 +858,36 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
   useEffect(() => {
     const cur = sceneRef.current;
     if (!cur) return;
-    // Sun subsolar point in lat/lon (approx). Compute from sun ECI direction
-    // and Greenwich Mean Sidereal Time.
-    const date = sceneTime;
-    const jd = date.getTime() / 86400000 + 2440587.5;
-    const n = jd - 2451545.0;
-    const Ldeg = (280.46 + 0.9856474 * n) % 360;
-    const gdeg = (357.528 + 0.9856003 * n) % 360;
-    const lambdaDeg =
-      Ldeg + 1.915 * Math.sin((gdeg * Math.PI) / 180) + 0.02 * Math.sin((2 * gdeg * Math.PI) / 180);
-    const epsilonDeg = 23.439 - 0.0000004 * n;
-    const lambda = (lambdaDeg * Math.PI) / 180;
-    const epsilon = (epsilonDeg * Math.PI) / 180;
-    const sx = Math.cos(lambda);
-    const sy = Math.cos(epsilon) * Math.sin(lambda);
-    const sz = Math.sin(epsilon) * Math.sin(lambda);
-    // GMST (radians)
-    const T = n / 36525;
-    let gmstSec = 67310.54841 +
+    // Sun direction in ECI, rotated into the scene's Earth-fixed basis.
+    const sunEci = sunDirectionEci(sceneTime);
+    const jd = sceneTime.getTime() / 86400000 + 2440587.5;
+    const T = (jd - 2451545.0) / 36525;
+    let gmstSec =
+      67310.54841 +
       (876600 * 3600 + 8640184.812866) * T +
       0.093104 * T * T -
       6.2e-6 * T * T * T;
     gmstSec = ((gmstSec % 86400) + 86400) % 86400;
     const gmst = (gmstSec / 240) * (Math.PI / 180);
-    // Rotate sun ECI → ECF by -gmst about Z
+
     const cg = Math.cos(-gmst);
     const sg = Math.sin(-gmst);
-    const ex = cg * sx - sg * sy;
-    const ey = sg * sx + cg * sy;
-    const ez = sz;
-    // Subsolar lat/lon in our scene convention: scene = (cos(lat)cos(lon), sin(lat), -cos(lat)sin(lon))
-    // ECF: (cos(lat)cos(lon), cos(lat)sin(lon), sin(lat))
-    // Map ECF → scene basis: scene_x = ecf_x, scene_y = ecf_z, scene_z = -ecf_y
+    const ex = cg * sunEci.x - sg * sunEci.y;
+    const ey = sg * sunEci.x + cg * sunEci.y;
+    const ez = sunEci.z;
+    // ECF → scene basis: scene = (x, z, -y)
     const cx = ex;
     const cy = ez;
     const cz = -ey;
-    // Build orthonormal basis around sun-direction's antipodal axis (terminator is great circle perpendicular to sun)
+
+    // Orthonormal basis of the great circle perpendicular to the sun.
     let ux = 0, uy = 1, uz = 0;
     const refDot = cx * ux + cy * uy + cz * uz;
     ux -= refDot * cx; uy -= refDot * cy; uz -= refDot * cz;
     let uLen = Math.hypot(ux, uy, uz);
     if (uLen < 1e-6) {
       ux = 1; uy = 0; uz = 0;
-      const d = cx;
-      ux -= d * cx; uy -= d * cy; uz -= d * cz;
+      ux -= cx * cx; uy -= cx * cy; uz -= cx * cz;
       uLen = Math.hypot(ux, uy, uz);
     }
     ux /= uLen; uy /= uLen; uz /= uLen;
@@ -827,46 +901,49 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
       const theta = (i / segments) * Math.PI * 2;
       const ct = Math.cos(theta);
       const st = Math.sin(theta);
-      const x = ct * ux + st * vx;
-      const y = ct * uy + st * vy;
-      const z = ct * uz + st * vz;
-      positions.setXYZ(i, x * r, y * r, z * r);
+      positions.setXYZ(
+        i,
+        (ct * ux + st * vx) * r,
+        (ct * uy + st * vy) * r,
+        (ct * uz + st * vz) * r
+      );
     }
     positions.needsUpdate = true;
-    cur.terminatorLine.geometry.computeBoundingSphere();
   }, [sceneTime]);
 
   return (
     <div className="globe-shell" data-testid="globe-scene">
       <div ref={hostRef} className="globe-canvas" />
       <div className="scene-vignette" />
-      {popup ? (
+      {popupObject ? (
         <div
+          ref={popupElementRef}
           className="sat-popup"
-          style={{ left: popup.x, top: popup.y }}
           role="tooltip"
-          onClick={(e) => e.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
         >
-          <div className="sat-popup-header">{popup.name}</div>
-          <div className="sat-popup-row">
-            <span>NORAD ID</span>
-            <strong>{popup.noradId}</strong>
-          </div>
-          <div className="sat-popup-row">
-            <span>Class</span>
-            <strong>{popup.objectType}</strong>
-          </div>
-          <div className="sat-popup-row">
-            <span>Altitude</span>
-            <strong>{popup.altitudeKm.toFixed(1)} km</strong>
-          </div>
-          <div className="sat-popup-row">
-            <span>Speed</span>
-            <strong>{popup.speedKmS.toFixed(3)} km/s</strong>
-          </div>
-          <div className="sat-popup-row">
-            <span>Period</span>
-            <strong>{popup.orbitPeriodMin.toFixed(1)} min</strong>
+          <div className="sat-popup-card">
+            <div className="sat-popup-header">{popupObject.name}</div>
+            <div className="sat-popup-row">
+              <span>NORAD ID</span>
+              <strong>{popupObject.noradId}</strong>
+            </div>
+            <div className="sat-popup-row">
+              <span>Class</span>
+              <strong>{popupObject.objectType}</strong>
+            </div>
+            <div className="sat-popup-row">
+              <span>Altitude</span>
+              <strong>{popupObject.altitudeKm.toFixed(1)} km</strong>
+            </div>
+            <div className="sat-popup-row">
+              <span>Speed</span>
+              <strong>{popupObject.speedKmS.toFixed(3)} km/s</strong>
+            </div>
+            <div className="sat-popup-row">
+              <span>Period</span>
+              <strong>{orbitalPeriodMinutes(popupObject.altitudeKm).toFixed(1)} min</strong>
+            </div>
           </div>
         </div>
       ) : null}
