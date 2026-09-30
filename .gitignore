@@ -1,5 +1,6 @@
 node_modules
 .next
+.next-static/
 out
 build
 coverage
@@ -12,3 +13,9 @@ yarn-debug.log*
 yarn-error.log*
 .DS_Store
 *.tsbuildinfo
+output/
+public/data/
+cloud/dist/
+cloud/.git/
+cloud/.wrangler/
+cloud/.sites-runtime/

@@ -1,72 +1,39 @@
-// Focused runtime check: verifies there are no hydration errors and no stray
-// 4xx/5xx resources, then samples the scene counters a few times.
-const { chromium } = require("playwright");
+const { openBrowser, collectFailures, configureFixture, markFailure } = require("./browser-check.cjs");
 
-const URL = process.env.TARGET_URL || "http://localhost:3123";
+const targetUrl = process.env.TARGET_URL || "http://localhost:3123";
 
-(async () => {
-  const browser = await chromium.launch({
-    channel: "chrome",
-    args: ["--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"]
-  });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+async function main() {
+  const browser = await openBrowser();
+  try {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const failures = collectFailures(page);
+    const fixtureMode = await configureFixture(page, targetUrl);
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-testid="globe-scene"] canvas', { timeout: 60_000 });
+    await page.waitForFunction(() => {
+      const metric = document.querySelector(".metric span")?.textContent || "0";
+      return Number(metric.replace(/[^0-9]/g, "")) > 0;
+    }, null, { timeout: 60_000 });
 
-  const errors = [];
-  const badResponses = [];
-  const actors = [];
+    const clockA = await page.locator(".metric.wide span").textContent();
+    await page.waitForTimeout(3000);
+    const clockB = await page.locator(".metric.wide span").textContent();
+    const state = await page.evaluate(() => ({
+      metrics: Array.from(document.querySelectorAll(".metric span")).map((node) => node.textContent.trim()),
+      legendVisible: Boolean(document.querySelector(".legend")),
+      loadedCatalogs: document.querySelectorAll(".catalog-item.active").length,
+      iconHref: document.querySelector('link[rel~="icon"]')?.getAttribute("href") ?? null
+    }));
+    const clockAdvanced = clockA !== clockB;
+    const workerStarted = failures.workers.length > 0;
+    console.log(JSON.stringify({ fixtureMode, state, clockA, clockB, clockAdvanced, workerStarted, ...failures }, null, 2));
+    markFailure(failures, [clockAdvanced, workerStarted, state.legendVisible, state.loadedCatalogs > 0]);
+  } finally {
+    await browser.close();
+  }
+}
 
-  page.on("console", (m) => {
-    const text = m.text();
-    if (m.type() === "error" || /hydrat|Minified React error/i.test(text)) {
-      errors.push(`[console:${m.type()}] ${text}`);
-    }
-  });
-  page.on("pageerror", (e) => errors.push(`[pageerror] ${e.message}`));
-  page.on("response", (r) => {
-    const status = r.status();
-    if (status >= 400) badResponses.push(`${status} ${r.url()}`);
-  });
-  page.on("requestfailed", (r) =>
-    badResponses.push(`FAILED ${r.url()} :: ${r.failure()?.errorText}`)
-  );
-  page.on("worker", (w) => actors.push(`worker: ${w.url()}`));
-
-  await page.goto(URL, { waitUntil: "networkidle" });
-  await page.waitForTimeout(6000);
-
-  const clockA = await page.$eval(".metric.wide span", (n) => n.textContent.trim());
-  await page.waitForTimeout(3000);
-  const clockB = await page.$eval(".metric.wide span", (n) => n.textContent.trim());
-
-  const state = await page.evaluate(() => {
-    const metrics = Array.from(document.querySelectorAll(".metric span")).map((n) =>
-      (n.textContent || "").trim()
-    );
-    const iconHref =
-      document.querySelector('link[rel~="icon"]')?.getAttribute("href") ?? null;
-    return {
-      metrics,
-      iconHref,
-      legendVisible: !!document.querySelector(".legend"),
-      catalogs: document.querySelectorAll(".catalog-item.active").length
-    };
-  });
-
-  console.log(
-    JSON.stringify(
-      {
-        state,
-        clockA,
-        clockB,
-        clockAdvanced: clockA !== clockB,
-        badResponses,
-        errors,
-        actors
-      },
-      null,
-      2
-    )
-  );
-
-  await browser.close();
-})();
+main().catch((error) => {
+  console.error(error.message);
+  process.exitCode = 1;
+});

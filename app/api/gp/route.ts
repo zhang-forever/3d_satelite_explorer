@@ -12,21 +12,28 @@ export async function GET(request: NextRequest) {
   if (!catalog) {
     return NextResponse.json(
       { error: "Unknown catalog group", group: groupId },
-      { status: 404 }
+      { status: 404, headers: { "Cache-Control": "no-store" } }
     );
   }
 
   try {
     const payload = await getGpGroup(catalog);
-    const status = payload.records.length === 0 ? 502 : 200;
-    return NextResponse.json(payload, { status });
+    const status = payload.fetchedAt === null ? 502 : 200;
+    const cacheControl = status !== 200 || payload.stale || payload.error
+      ? "no-store"
+      : "public, max-age=60, s-maxage=60";
+    return NextResponse.json(payload, { status, headers: { "Cache-Control": cacheControl } });
   } catch (error) {
+    console.error("[CelesTrak] Unable to serve group", {
+      group: groupId,
+      kind: error instanceof Error ? error.name : "UnknownError"
+    });
     return NextResponse.json(
       {
-        error: error instanceof Error ? error.message : "Unable to fetch GP data",
+        error: "Unable to fetch GP data",
         group: groupId
       },
-      { status: 502 }
+      { status: 502, headers: { "Cache-Control": "no-store" } }
     );
   }
 }
