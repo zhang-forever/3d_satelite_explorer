@@ -7,8 +7,8 @@ import { CATALOGS } from "@/lib/catalogs";
 import type { OmmRecord, RendezvousScanHit } from "@/lib/orbit";
 
 vi.mock("@/components/GlobeScene", () => ({
-  default: React.forwardRef(function GlobeStub({ objects }: { objects: unknown[] }) {
-    return <div data-testid="globe-stub">{objects.length}</div>;
+  default: React.forwardRef<HTMLDivElement, { objects: unknown[] }>(function GlobeStub({ objects }, ref) {
+    return <div ref={ref} data-testid="globe-stub">{objects.length}</div>;
   })
 }));
 vi.mock("@/lib/passes", () => ({ predictPasses: () => [], azimuthToCompass: () => "N" }));
@@ -91,7 +91,7 @@ describe("explorer loading and worker recovery", () => {
 
   it("deduplicates simultaneous requests before React can commit the loading state", async () => {
     const fetchMock = installFetch(() => new Promise(() => {}));
-    render(<SatelliteExplorer />);
+    await act(async () => { render(<SatelliteExplorer />); });
     act(() => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "2" }));
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "2" }));

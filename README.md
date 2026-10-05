@@ -4,7 +4,7 @@
 
 <h1 align="center">🛰️ Orbital Field · 轨道场</h1>
 
-**Live / 在线体验：[Orbital Field · 轨道场](https://orbital-field.zzyyss298.chatgpt.site)** — publicly hosted with Sites; your development computer can be shut down. 托管源码在 `cloud/`，发布记录见 [公开发布记录](docs/sites-publication.md)。
+**Existing hosted version / 既有托管版本：[Orbital Field · 轨道场](https://orbital-field.zzyyss298.chatgpt.site)** — maintained separately through Sites; this GitHub merge does not update or deploy it. 托管版源码由独立 Sites 项目维护，不包含在此 GitHub checkout 中；历史发布记录见 [公开发布记录](docs/sites-publication.md)。
 
 <p align="center">
   <strong>Real-time 3D tracker for 16,000+ satellites, space debris & rocket bodies — powered by live CelesTrak data, rendered in your browser.</strong>
@@ -120,7 +120,7 @@ No environment variables or API keys are required — CelesTrak's GP API is publ
 
 Deploy the Next.js service to a managed Node.js host with a persistent disk; your development computer can then be shut down. Visitors download records from the hosted API and calculate/render orbits in their own browsers. Watchlists remain local to each browser.
 
-The repository includes a standalone production package, `Dockerfile`, a paid single-instance Render Blueprint (`render.yaml`), and `/api/health`. See [deployment and data guide](docs/deployment.md) for setup, persistence, recovery, and verification. The current full-catalog API needs additional shared storage and a large-payload strategy before Vercel deployment; it is not a GitHub Pages static export.
+The repository includes a standalone production package, `Dockerfile`, a paid single-instance Render Blueprint (`render.yaml`), and `/api/health`. See [deployment and data guide](docs/deployment.md) for setup, persistence, recovery, and verification. The Node.js full-catalog API needs additional shared storage and a large-payload strategy before Vercel deployment. A separate [snapshot build](docs/static-mirror.md) can prepare files for static hosting; a local build does not publish them.
 
 #### 🌐 Access from Other Devices on the Same Network
 
@@ -305,7 +305,7 @@ npm run dev
 
 将 Next.js 服务部署到提供持久磁盘的托管平台，开发电脑即可关机。其他人打开网址，从云端读取轨道记录，再由自己的浏览器计算轨道与绘制地球。关注列表保存在各自浏览器中，目前没有跨设备同步。
 
-已提供 standalone 生产包、`Dockerfile`、单实例付费 Render 配置（`render.yaml`）与 `/api/health`。详细步骤见[发布与数据运行](docs/deployment.md)。当前全量目录接口需要共享缓存与大响应体处理后才适合 Vercel，也不能直接作为 GitHub Pages 纯静态网页运行。
+已提供 standalone 生产包、`Dockerfile`、单实例付费 Render 配置（`render.yaml`）与 `/api/health`。详细步骤见[发布与数据运行](docs/deployment.md)。Node.js 全量目录接口需要共享缓存与大响应体处理后才适合 Vercel；另有[快照构建模式](docs/static-mirror.md)可准备静态托管文件，本地构建不会自动发布。
 
 #### 🌐 同一 WiFi 下从其他设备访问
 

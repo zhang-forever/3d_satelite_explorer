@@ -28,13 +28,46 @@ function collectFailures(page) {
   return { errors, badResponses, workers };
 }
 
+// Keep this self-contained: Playwright serializes it into the browser context.
+function readRuntimeState({ waitForReady = false } = {}) {
+  const countText = document.querySelector('[data-testid="propagated-count"]')?.textContent ?? "";
+  const normalizedCount = countText.replace(/[,\s]/g, "");
+  const parsedCount = /^\d+$/.test(normalizedCount) ? Number(normalizedCount) : 0;
+  const propagatedCount = Number.isSafeInteger(parsedCount) ? parsedCount : 0;
+  const uiErrors = Array.from(document.querySelectorAll('[role="alert"]'))
+    .map((node) => node.textContent.trim() || "Empty UI error alert");
+  const ready = propagatedCount > 0 && uiErrors.length === 0;
+
+  if (waitForReady) {
+    if (uiErrors.length) throw new Error(`UI error alerts: ${uiErrors.join("; ")}`);
+    return ready;
+  }
+
+  const canvas = document.querySelector('[data-testid="globe-scene"] canvas');
+  return {
+    ready,
+    propagatedCount,
+    uiErrors,
+    metrics: Array.from(document.querySelectorAll(".metric span")).map((node) => node.textContent.trim()),
+    canvasSize: canvas ? [canvas.width, canvas.height] : null,
+    legendVisible: Boolean(document.querySelector(".legend")),
+    loadedCatalogs: document.querySelectorAll(".catalog-item.active").length,
+    catalogCount: document.querySelectorAll(".catalog-item").length,
+    iconHref: document.querySelector('link[rel~="icon"]')?.getAttribute("href") ?? null
+  };
+}
+
 async function configureFixture(page, targetUrl) {
   const fixturePath = process.env.VERIFY_GP_FIXTURE;
   if (!fixturePath) return false;
   const parsed = JSON.parse(await readFile(fixturePath, "utf8"));
   const records = Array.isArray(parsed) ? parsed : parsed.records;
   if (!Array.isArray(records) || !records.length) throw new Error("GP fixture must contain OMM records.");
-  const response = await page.request.get(new URL("/api/catalogs", targetUrl).href);
+  const appRoot = new URL(targetUrl);
+  appRoot.pathname = `${appRoot.pathname.replace(/\/+$/, "")}/`;
+  appRoot.search = "";
+  appRoot.hash = "";
+  const response = await page.request.get(new URL("api/catalogs", appRoot).href);
   if (!response.ok()) throw new Error(`Catalog API returned ${response.status()}`);
   const { catalogs } = await response.json();
   await page.route("**/api/gp?*", (route) => {
@@ -62,4 +95,4 @@ function markFailure(failures, checks = []) {
   }
 }
 
-module.exports = { openBrowser, collectFailures, configureFixture, markFailure };
+module.exports = { openBrowser, collectFailures, readRuntimeState, configureFixture, markFailure };

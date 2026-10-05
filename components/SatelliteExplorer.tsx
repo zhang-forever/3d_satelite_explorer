@@ -33,7 +33,7 @@ import {
 } from "lucide-react";
 import GlobeScene, { GlobeSceneHandle } from "@/components/GlobeScene";
 import { CatalogDefinition } from "@/lib/catalogs";
-import { AVAILABLE_CATALOGS, IS_SNAPSHOT_MODE, catalogsDataUrl, groupDataUrl } from "@/lib/dataAccess";
+import { AVAILABLE_CATALOGS, IS_SNAPSHOT_MODE, catalogsDataUrl, groupDataUrl, snapshotIsStale } from "@/lib/dataAccess";
 import { formatDateTime, formatDateTimeShort, formatNumber } from "@/lib/format";
 import { copy, initialLocale, Locale } from "@/lib/i18n";
 import {
@@ -56,6 +56,7 @@ import { azimuthToCompass, predictPasses } from "@/lib/passes";
 type CatalogSummary = CatalogDefinition & {
   cachedCount: number;
   fetchedAt: string | null;
+  checkedAt?: string | null;
   sourceUpdatedAt: string | null;
   stale: boolean;
   error: string | null;
@@ -65,6 +66,7 @@ type LoadedGroup = {
   catalog: CatalogDefinition;
   records: OmmRecord[];
   fetchedAt: string | null;
+  checkedAt?: string | null;
   sourceUpdatedAt: string | null;
   stale: boolean;
   cacheState: string;
@@ -260,6 +262,7 @@ export default function SatelliteExplorer() {
   const [altitudeMax, setAltitudeMax] = useState(42000);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sceneTime, setSceneTime] = useState(() => new Date());
+  const [dataNowMs, setDataNowMs] = useState(() => Date.now());
   const [isPlaying, setIsPlaying] = useState(true);
   const [speedIndex, setSpeedIndex] = useState(1);
   const [autoRotate, setAutoRotate] = usePersistentState(AUTO_ROTATE_KEY, true);
@@ -310,6 +313,18 @@ export default function SatelliteExplorer() {
   }, [sceneTime]);
 
   useEffect(() => {
+    if (!IS_SNAPSHOT_MODE) return;
+    // Data age follows wall time, including while simulation playback is paused.
+    const update = () => setDataNowMs(Date.now());
+    const interval = window.setInterval(update, 60_000);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, []);
+
+  useEffect(() => {
     const controller = new AbortController();
     let timedOut = false;
     const timeout = window.setTimeout(() => {
@@ -329,6 +344,7 @@ export default function SatelliteExplorer() {
           const summary = summaries.find((catalog) => catalog.id === known.id);
           return summary ? { ...known, cachedCount: summary.cachedCount,
             fetchedAt: typeof summary.fetchedAt === "string" ? summary.fetchedAt : null,
+            checkedAt: typeof summary.checkedAt === "string" ? summary.checkedAt : null,
             sourceUpdatedAt: typeof summary.sourceUpdatedAt === "string" ? summary.sourceUpdatedAt : null,
             stale: summary.stale, error: typeof summary.error === "string" ? summary.error : null } : known;
         }));
@@ -400,6 +416,7 @@ export default function SatelliteExplorer() {
           catalog,
           records: payload.records,
           fetchedAt: typeof payload.fetchedAt === "string" ? payload.fetchedAt : null,
+          checkedAt: typeof payload.checkedAt === "string" ? payload.checkedAt : null,
           sourceUpdatedAt: typeof payload.sourceUpdatedAt === "string" ? payload.sourceUpdatedAt : null,
           stale: Boolean(payload.stale),
           cacheState: typeof payload.cacheState === "string" ? payload.cacheState : "miss",
@@ -414,6 +431,7 @@ export default function SatelliteExplorer() {
                 ...catalog,
                 cachedCount: (payload.records as OmmRecord[]).length,
                 fetchedAt: typeof payload.fetchedAt === "string" ? payload.fetchedAt : catalog.fetchedAt,
+                checkedAt: typeof payload.checkedAt === "string" ? payload.checkedAt : null,
                 sourceUpdatedAt: typeof payload.sourceUpdatedAt === "string" ? payload.sourceUpdatedAt : catalog.sourceUpdatedAt,
                 stale: Boolean(payload.stale),
                 error: typeof payload.error === "string" ? payload.error : null
@@ -732,15 +750,18 @@ export default function SatelliteExplorer() {
     return sampleOrbitTrack(selectedRecord.record, new Date(trackAnchorMs), selectedRecord.groupId);
   }, [selectedRecord, trackAnchorMs]);
 
+  const passesVisible = !leftRailCollapsed && !collapsedPanels.analysis && analysisTab === "passes";
   const passes = useMemo(() => {
-    if (!selectedRecord) return [];
+    // A 48 h sweep is only useful while its results are visible. In particular,
+    // accelerated playback crosses the scene-time minute grid every real tick.
+    if (!passesVisible || !selectedRecord) return [];
     return predictPasses(
       selectedRecord.record,
       { latitudeDeg: observerLat, longitudeDeg: observerLon },
       new Date(passesAnchorMs),
       { windowHours: 48, minElevationDeg, maxResults: 6 }
     );
-  }, [minElevationDeg, observerLat, observerLon, passesAnchorMs, selectedRecord]);
+  }, [minElevationDeg, observerLat, observerLon, passesAnchorMs, passesVisible, selectedRecord]);
 
   const requestLocation = () => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
@@ -1162,6 +1183,8 @@ export default function SatelliteExplorer() {
                           <small>
                             {loaded?.records.length ?? catalog.cachedCount ?? 0} {t.objects}
                           </small>
+                          {IS_SNAPSHOT_MODE && fetchedAt && snapshotIsStale(loaded ?? catalog, dataNowMs)
+                            ? <small>{t.snapshotStale}</small> : null}
                           {error ? <AlertTriangle size={14} /> : null}
                         </span>
                       </button>
@@ -1183,7 +1206,7 @@ export default function SatelliteExplorer() {
           </div>
           <div className="metric">
             <LocateFixed size={16} />
-            <span>{formatNumber(propagated.length)}</span>
+            <span data-testid="propagated-count">{formatNumber(propagated.length)}</span>
             <small>{t.visible}</small>
           </div>
           <div className="metric wide">
@@ -1811,7 +1834,10 @@ export default function SatelliteExplorer() {
                       <Fragment key={group.catalog.id}>
                         <div className="status-row">
                           <span>{group.catalog.label[locale]}</span>
-                          <strong>{IS_SNAPSHOT_MODE ? t.dataSnapshot : group.stale ? t.stale : t.updated}</strong>
+                          <strong>{IS_SNAPSHOT_MODE ? <>
+                            <span>{t.dataSnapshot}</span>
+                            {snapshotIsStale(group, dataNowMs) ? <> · <span>{t.snapshotStale}</span></> : null}
+                          </> : group.stale ? t.stale : t.updated}</strong>
                         </div>
                         {IS_SNAPSHOT_MODE && group.sourceUpdatedAt ? (
                           <div className="status-row">

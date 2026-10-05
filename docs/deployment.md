@@ -1,6 +1,6 @@
 # 发布与数据运行
 
-当前已按用户要求使用免费托管路径发布到 Sites：[正式网址](https://orbital-field.zzyyss298.chatgpt.site)。访问范围为公开，开发电脑可以关机。实际托管源码位于 `cloud/`，详见 [公开发布记录](sites-publication.md) 与 [托管版说明](../cloud/docs/deployment.md)。下面的 Node.js、Render 与 Docker 内容保留为原版运行和其他平台部署参考；本次没有开通 Render 付费服务。
+历史发布记录中的 Sites 版本：[既有网址](https://orbital-field.zzyyss298.chatgpt.site)。历史记录中的访问范围为公开；本次合并不重新验证或更改其部署状态。该托管版在独立 Sites 项目中维护，历史工作区的 `cloud/` 目录并未包含在此 GitHub checkout 中，详见 [公开发布记录](sites-publication.md)。合并 GitHub 代码不会更新现有 Sites 网站。下面的 Node.js、Render 与 Docker 内容保留为原版运行和其他平台部署参考；本次没有开通 Render 付费服务。
 
 本项目需要运行 Next.js 的 Node.js 服务。服务由云平台托管后，访问者打开网址即可使用，你的开发电脑可以关机。轨道数据不需要逐台复制，也不需要访问你的电脑。
 
@@ -68,11 +68,11 @@ npm run start:standalone
 
 ## Vercel、静态托管与免费方案的边界
 
-当前版本不能直接作为 GitHub Pages 的纯静态网站运行，因为 `/api/gp` 在服务器端访问上游。Vercel 普通函数也不是现有接口的直接替代：本地文件缓存无法共享并保证重启后保留，而且 [函数响应体上限为 4.5 MB](https://vercel.com/docs/functions/limitations)，全量 `active` OMM JSON 可超过该限制。
+默认 Node.js 模式不能直接作为 GitHub Pages 的纯静态网站运行，因为 `/api/gp` 在服务器端访问上游；仓库另有独立的[静态快照构建](static-mirror.md)。Vercel 普通函数也不是现有接口的直接替代：本地文件缓存无法共享并保证重启后保留，而且 [函数响应体上限为 4.5 MB](https://vercel.com/docs/functions/limitations)，全量 `active` OMM JSON 可超过该限制。
 
 若以后选择 Vercel，需要将缓存迁移到共享存储，并将大目录通过对象存储/CDN或分页提供。只把缓存目录改到 `/tmp`，不能解决重启、并发实例和上游下载限制。
 
-如果预算要求只使用免费静态托管，可以另做定期生成数据快照并部署到 CDN 的模式；这需要调整数据入口、更新任务与失败保留策略。届时轨道位置仍可在浏览器实时计算，但数据更新依赖快照任务。本次准备的是托管 Node.js 方案。
+静态快照模式已实现独立数据入口、快照准备与失败保留策略。轨道位置仍在浏览器计算，但数据更新依赖另行运行快照更新与发布流程。本文其余配置描述托管 Node.js 模式；构建静态文件不等于已经发布或启用定时更新。
 
 ## 失败后如何恢复
 

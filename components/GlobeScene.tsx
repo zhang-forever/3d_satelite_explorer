@@ -543,7 +543,8 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
 
     const animate = () => {
       controls.update();
-      earth.rotation.y += 0.00035;
+      // Satellite positions and the observer use an Earth-fixed frame. Keep
+      // geography fixed in that frame; OrbitControls supplies camera rotation.
       cloudMesh.rotation.y += 0.00055;
       atmosphere.rotation.y += 0.00025;
 

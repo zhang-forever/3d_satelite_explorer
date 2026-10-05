@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SatelliteExplorer from "@/components/SatelliteExplorer";
 import { CATALOGS } from "@/lib/catalogs";
 
-vi.mock("@/lib/dataAccess", async () => {
+vi.mock("@/lib/dataAccess", async (importOriginal) => {
   const { CATALOGS } = await import("@/lib/catalogs");
   return {
+    ...await importOriginal<typeof import("@/lib/dataAccess")>(),
     IS_SNAPSHOT_MODE: true,
     AVAILABLE_CATALOGS: CATALOGS.filter((catalog) => ["active", "stations"].includes(catalog.id)),
     catalogsDataUrl: () => "/3d_satelite_explorer/data/catalogs.json",
@@ -29,9 +30,10 @@ const record = {
   RA_OF_ASC_NODE: 187.5, ARG_OF_PERICENTER: 359.4, MEAN_ANOMALY: 0.6
 };
 
-function installSnapshotFetch() {
+function installSnapshotFetch(extraMetadata: Record<string, unknown> = {}) {
   const fetchMock = vi.fn((url: string) => {
-    const metadata = { fetchedAt: publishedFetchedAt, sourceUpdatedAt: orbitalEpoch, stale: false, error: null };
+    const metadata = { fetchedAt: publishedFetchedAt, sourceUpdatedAt: orbitalEpoch, stale: false, error: null,
+      ...extraMetadata };
     const payload = url.endsWith("catalogs.json")
       ? { catalogs: available.map((catalog) => ({ ...catalog, cachedCount: 1, ...metadata })) }
       : { group: available.find((catalog) => url.endsWith(`/${catalog.id}.json`)), records: [record], ...metadata };
@@ -49,6 +51,7 @@ describe("snapshot explorer", () => {
   });
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -79,5 +82,24 @@ describe("snapshot explorer", () => {
     expect(document.querySelector(`time[datetime="${orbitalEpoch}"]`)).toBeInTheDocument();
     expect(document.querySelector(`time[datetime="${publishedFetchedAt}"]`)).toBeInTheDocument();
     expect(screen.queryByText("Updated", { exact: true })).not.toBeInTheDocument();
+  });
+
+  it("marks an old published snapshot stale even when its static metadata says fresh", async () => {
+    installSnapshotFetch();
+    render(<SatelliteExplorer />);
+    await waitFor(() => expect(screen.getByRole("button", { name: /Active/ })).toHaveClass("active"));
+    expect(screen.getAllByText("Snapshot out of date").length).toBeGreaterThan(0);
+  });
+
+  it("ages revalidated snapshots while simulation playback is paused", async () => {
+    vi.useFakeTimers();
+    const checkedAt = "2026-10-05T10:00:00.000Z";
+    vi.setSystemTime(new Date("2026-10-05T13:59:30.000Z"));
+    installSnapshotFetch({ checkedAt });
+    await act(async () => { render(<SatelliteExplorer />); });
+    expect(screen.queryByText("Snapshot out of date")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(screen.getAllByText("Snapshot out of date").length).toBeGreaterThan(0);
   });
 });

@@ -45,4 +45,17 @@ describe("data source URLs and available catalogs", () => {
     expect(source.groupDataUrl("stations")).toBe("/data/gp/stations.json");
     expect(() => source.groupDataUrl("active")).toThrow("unavailable in this release");
   });
+
+  it("checks static freshness against wall time and preserves upstream error flags", async () => {
+    const { snapshotIsStale } = await import("@/lib/dataAccess");
+    const now = Date.parse("2026-10-05T14:00:00Z");
+    const snapshot = { fetchedAt: "2026-10-01T00:00:00Z", checkedAt: "2026-10-05T12:00:00Z", stale: false };
+    expect(snapshotIsStale(snapshot, now)).toBe(false);
+    expect(snapshotIsStale({ ...snapshot, checkedAt: null }, now)).toBe(true);
+    expect(snapshotIsStale({ ...snapshot, checkedAt: "2026-10-05T10:00:00Z" }, now)).toBe(true);
+    expect(snapshotIsStale({ ...snapshot, checkedAt: "2026-10-06T00:00:00Z" }, now)).toBe(true);
+    expect(snapshotIsStale({ ...snapshot, stale: true }, now)).toBe(true);
+    expect(snapshotIsStale({ ...snapshot, error: "Source unavailable" }, now)).toBe(true);
+    expect(snapshotIsStale({ ...snapshot, checkedAt: "invalid" }, now)).toBe(true);
+  });
 });
