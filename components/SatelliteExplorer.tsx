@@ -652,15 +652,18 @@ export default function SatelliteExplorer() {
     return sampleOrbitTrack(selectedRecord.record, new Date(trackAnchorMs), selectedRecord.groupId);
   }, [selectedRecord, trackAnchorMs]);
 
+  const passesVisible = !leftRailCollapsed && !collapsedPanels.analysis && analysisTab === "passes";
   const passes = useMemo(() => {
-    if (!selectedRecord) return [];
+    // A 48 h sweep is only useful while its results are visible. In particular,
+    // accelerated playback crosses the scene-time minute grid every real tick.
+    if (!passesVisible || !selectedRecord) return [];
     return predictPasses(
       selectedRecord.record,
       { latitudeDeg: observerLat, longitudeDeg: observerLon },
       new Date(passesAnchorMs),
       { windowHours: 48, minElevationDeg, maxResults: 6 }
     );
-  }, [minElevationDeg, observerLat, observerLon, passesAnchorMs, selectedRecord]);
+  }, [minElevationDeg, observerLat, observerLon, passesAnchorMs, passesVisible, selectedRecord]);
 
   const requestLocation = () => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
