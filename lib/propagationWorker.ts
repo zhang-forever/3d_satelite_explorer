@@ -44,6 +44,7 @@ type PropagationSnapshot = {
 
 type OutboundMessage =
   | PropagationSnapshot
+  | { type: "workerError"; requestId: number | null; message: string }
   | {
       type: "rendezvousScan";
       requestId: number;
@@ -91,9 +92,7 @@ function buildSatrecs() {
   }
 }
 
-ctx.addEventListener("message", (event: MessageEvent<InboundMessage>) => {
-  const msg = event.data;
-
+function handleMessage(msg: InboundMessage) {
   if (msg.type === "setRecords") {
     records = msg.records;
     recordsVersion = msg.version;
@@ -148,6 +147,20 @@ ctx.addEventListener("message", (event: MessageEvent<InboundMessage>) => {
     };
     ctx.postMessage(reply);
     return;
+  }
+}
+
+ctx.addEventListener("message", (event: MessageEvent<InboundMessage>) => {
+  const msg = event.data;
+  try {
+    handleMessage(msg);
+  } catch (error) {
+    const reply: OutboundMessage = {
+      type: "workerError",
+      requestId: "requestId" in msg ? msg.requestId : null,
+      message: error instanceof Error ? error.message : "Orbital calculation failed"
+    };
+    ctx.postMessage(reply);
   }
 });
 

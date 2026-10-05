@@ -1,0 +1,23 @@
+# This configuration uses a paid service and persistent disk. Review pricing before creating it.
+services:
+  - type: web
+    name: orbital-field
+    runtime: node
+    plan: 0.5c-512mb
+    numInstances: 1
+    buildCommand: npm ci --no-audit --no-fund && npm run build
+    startCommand: npm run start:standalone
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: HOSTNAME
+        value: 0.0.0.0
+      - key: CELESTRAK_CACHE_DIR
+        value: /var/data/celestrak
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
+    disk:
+      name: celestrak-cache
+      mountPath: /var/data
+      sizeGB: 1

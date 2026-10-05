@@ -4,6 +4,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CATALOGS } from "@/lib/catalogs";
+import { publicAssetUrl } from "@/lib/dataAccess";
 import {
   OBJECT_CLASS_COLORS,
   sunDirectionEci,
@@ -27,10 +28,10 @@ export type GlobeSceneHandle = {
 
 // Local copies live under /public/textures so the app works fully offline.
 // Sourced once from threejs.org/examples/textures/planets/ — see README attribution.
-const EARTH_COLOR = "/textures/earth_atmos_2048.jpg";
-const EARTH_NORMAL = "/textures/earth_normal_2048.jpg";
-const EARTH_SPECULAR = "/textures/earth_specular_2048.jpg";
-const EARTH_CLOUDS = "/textures/earth_clouds_1024.png";
+const EARTH_COLOR = publicAssetUrl("/textures/earth_atmos_2048.jpg");
+const EARTH_NORMAL = publicAssetUrl("/textures/earth_normal_2048.jpg");
+const EARTH_SPECULAR = publicAssetUrl("/textures/earth_specular_2048.jpg");
+const EARTH_CLOUDS = publicAssetUrl("/textures/earth_clouds_1024.png");
 
 const GROUP_COLOR: Record<string, string> = Object.fromEntries(
   CATALOGS.map((catalog) => [catalog.id, catalog.color])
@@ -103,12 +104,15 @@ function mergeGeometries(geos: THREE.BufferGeometry[]) {
   const positions: number[] = [];
   const normals: number[] = [];
   for (const geo of geos) {
-    const pa = geo.getAttribute("position") as THREE.BufferAttribute;
-    const na = geo.getAttribute("normal") as THREE.BufferAttribute;
+    // Indexed primitives reuse vertices; flatten their triangles before merging.
+    const triangles = geo.index ? geo.toNonIndexed() : geo;
+    const pa = triangles.getAttribute("position") as THREE.BufferAttribute;
+    const na = triangles.getAttribute("normal") as THREE.BufferAttribute;
     for (let i = 0; i < pa.count; i++) {
       positions.push(pa.getX(i), pa.getY(i), pa.getZ(i));
       normals.push(na.getX(i), na.getY(i), na.getZ(i));
     }
+    if (triangles !== geo) triangles.dispose();
     geo.dispose();
   }
   const merged = new THREE.BufferGeometry();
@@ -280,6 +284,7 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
     if (!hostRef.current || sceneRef.current) return;
 
     const host = hostRef.current;
+    let disposed = false;
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#030712");
 
@@ -311,22 +316,32 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
     scene.add(sun);
 
     const textureLoader = new THREE.TextureLoader();
+    const textures: THREE.Texture[] = [];
+    const loadTexture = (url: string, onLoad: (texture: THREE.Texture) => void) => {
+      textures.push(textureLoader.load(url, (texture) => {
+        if (disposed) {
+          texture.dispose();
+          return;
+        }
+        onLoad(texture);
+      }));
+    };
 
     const earthMat = new THREE.MeshPhongMaterial({
       shininess: 12,
       specular: new THREE.Color("#3a3a3a")
     });
-    textureLoader.load(EARTH_COLOR, (t) => {
+    loadTexture(EARTH_COLOR, (t) => {
       t.colorSpace = THREE.SRGBColorSpace;
       earthMat.map = t;
       earthMat.needsUpdate = true;
     });
-    textureLoader.load(EARTH_NORMAL, (t) => {
+    loadTexture(EARTH_NORMAL, (t) => {
       earthMat.normalMap = t;
       earthMat.normalScale = new THREE.Vector2(0.8, 0.8);
       earthMat.needsUpdate = true;
     });
-    textureLoader.load(EARTH_SPECULAR, (t) => {
+    loadTexture(EARTH_SPECULAR, (t) => {
       earthMat.specularMap = t;
       earthMat.needsUpdate = true;
     });
@@ -357,7 +372,7 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
     });
     const cloudMesh = new THREE.Mesh(new THREE.SphereGeometry(1.012, 96, 96), cloudMat);
     scene.add(cloudMesh);
-    textureLoader.load(EARTH_CLOUDS, (t) => {
+    loadTexture(EARTH_CLOUDS, (t) => {
       t.colorSpace = THREE.SRGBColorSpace;
       cloudMat.map = t;
       cloudMat.needsUpdate = true;
@@ -375,18 +390,14 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
       starPositions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
     }
     starsGeo.setAttribute("position", new THREE.BufferAttribute(starPositions, 3));
-    scene.add(
-      new THREE.Points(
-        starsGeo,
-        new THREE.PointsMaterial({
-          color: "#dbeafe",
-          size: 0.035,
-          sizeAttenuation: true,
-          transparent: true,
-          opacity: 0.9
-        })
-      )
-    );
+    const starsMat = new THREE.PointsMaterial({
+      color: "#dbeafe",
+      size: 0.035,
+      sizeAttenuation: true,
+      transparent: true,
+      opacity: 0.9
+    });
+    scene.add(new THREE.Points(starsGeo, starsMat));
 
     // instanced groups
     const groups: InstancedGroups = {
@@ -578,6 +589,7 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
     };
 
     return () => {
+      disposed = true;
       const cur = sceneRef.current;
       resizeObserver.disconnect();
       renderer.domElement.removeEventListener("pointerdown", handlePointerDown);
@@ -589,14 +601,20 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
       earth.geometry.dispose();
       atmosphere.geometry.dispose();
       (atmosphere.material as THREE.Material).dispose();
-      for (const g of Object.values(groups)) {
+      for (const g of Object.values(cur?.groups ?? groups)) {
         (g.material as THREE.Material).dispose();
+        g.dispose();
+      }
+      for (const texture of textures) texture.dispose();
+      for (const line of [trackLine, footprintLine, groundTrackLine, terminatorLine]) {
+        (line.material as THREE.Material).dispose();
       }
       trackGeo.dispose();
       footprintGeo.dispose();
       groundTrackGeo.dispose();
       terminatorGeo.dispose();
       starsGeo.dispose();
+      starsMat.dispose();
       cloudMesh.geometry.dispose();
       cloudMat.dispose();
       observerGeo.dispose();
@@ -642,6 +660,7 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
           const parent = old.parent;
           old.removeFromParent();
           (old.material as THREE.Material).dispose();
+          old.dispose();
           parent?.add(next);
           groups = { ...groups, [type]: next };
           cur.groups = groups;
@@ -691,6 +710,7 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
     for (const type of OBJECT_CLASSES) {
       const mesh = groups[type];
       mesh.instanceMatrix.needsUpdate = true;
+      mesh.boundingSphere = null;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
   }, [objects, selectedId]);
@@ -757,7 +777,7 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
       selectedObject.scene.z
     );
     cur.selectedSprite.visible = true;
-  }, [selectedObject]);
+  }, [selectedObject, objects]);
 
   // ---- observer marker ----
   useEffect(() => {
@@ -828,7 +848,7 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
     }
     positions.needsUpdate = true;
     cur.footprintLine.visible = true;
-  }, [selectedObject]);
+  }, [selectedObject, objects]);
 
   // ---- ground track (sub-satellite trail) ----
   useEffect(() => {

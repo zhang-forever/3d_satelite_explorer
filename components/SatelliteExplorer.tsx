@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import clsx from "clsx";
 import {
   AlertTriangle,
@@ -32,7 +32,8 @@ import {
   Telescope
 } from "lucide-react";
 import GlobeScene, { GlobeSceneHandle } from "@/components/GlobeScene";
-import { CATALOGS, CatalogDefinition } from "@/lib/catalogs";
+import { CatalogDefinition } from "@/lib/catalogs";
+import { AVAILABLE_CATALOGS, IS_SNAPSHOT_MODE, catalogsDataUrl, groupDataUrl, snapshotIsStale } from "@/lib/dataAccess";
 import { formatDateTime, formatDateTimeShort, formatNumber } from "@/lib/format";
 import { copy, initialLocale, Locale } from "@/lib/i18n";
 import {
@@ -55,6 +56,7 @@ import { azimuthToCompass, predictPasses } from "@/lib/passes";
 type CatalogSummary = CatalogDefinition & {
   cachedCount: number;
   fetchedAt: string | null;
+  checkedAt?: string | null;
   sourceUpdatedAt: string | null;
   stale: boolean;
   error: string | null;
@@ -64,6 +66,7 @@ type LoadedGroup = {
   catalog: CatalogDefinition;
   records: OmmRecord[];
   fetchedAt: string | null;
+  checkedAt?: string | null;
   sourceUpdatedAt: string | null;
   stale: boolean;
   cacheState: string;
@@ -114,6 +117,35 @@ const SHOW_DEBRIS_KEY = "orbital-field:show-debris";
 // they only care about the minute / few seconds respectively.
 const TRACK_TICK_MS = 5_000;
 const PASSES_TICK_MS = 60_000;
+const DATA_REQUEST_TIMEOUT_MS = 30_000;
+
+function isApiObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function readApiResponse(response: Response) {
+  const payload: unknown = await response.json();
+  if (!isApiObject(payload)) throw new Error("Invalid data response");
+  if (!response.ok) {
+    throw new Error(typeof payload.error === "string" ? payload.error : `Request failed (${response.status})`);
+  }
+  return payload;
+}
+
+function isOmmRecord(value: unknown): value is OmmRecord {
+  if (!isApiObject(value) || typeof value.OBJECT_NAME !== "string" ||
+      typeof value.EPOCH !== "string" || !parseOmmEpoch(value.EPOCH)) return false;
+  return ["NORAD_CAT_ID", "MEAN_MOTION", "ECCENTRICITY", "INCLINATION", "RA_OF_ASC_NODE",
+    "ARG_OF_PERICENTER", "MEAN_ANOMALY"].every((key) =>
+    (typeof value[key] === "number" || typeof value[key] === "string") &&
+    value[key] !== "" && Number.isFinite(Number(value[key])));
+}
+
+function fallbackCatalogs(): CatalogSummary[] {
+  return AVAILABLE_CATALOGS.map((catalog) => ({
+    ...catalog, cachedCount: 0, fetchedAt: null, sourceUpdatedAt: null, stale: true, error: null
+  }));
+}
 
 const DEFAULT_COLLAPSED_PANELS: Record<CollapsiblePanelId, boolean> = {
   catalogs: false,
@@ -216,7 +248,8 @@ export default function SatelliteExplorer() {
   // client-side fallback once running, and a stored choice always wins.
   const [locale, setLocale] = usePersistentState<Locale>(LOCALE_KEY, "zh", initialLocale());
   const t = copy[locale];
-  const [catalogs, setCatalogs] = useState<CatalogSummary[]>([]);
+  const [catalogs, setCatalogs] = useState<CatalogSummary[]>(fallbackCatalogs);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
   const [loadedGroups, setLoadedGroups] = useState<Record<string, LoadedGroup>>({});
   const [loadingGroups, setLoadingGroups] = useState<Record<string, boolean>>({});
   const [loadErrors, setLoadErrors] = useState<Record<string, string>>({});
@@ -229,6 +262,7 @@ export default function SatelliteExplorer() {
   const [altitudeMax, setAltitudeMax] = useState(42000);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sceneTime, setSceneTime] = useState(() => new Date());
+  const [dataNowMs, setDataNowMs] = useState(() => Date.now());
   const [isPlaying, setIsPlaying] = useState(true);
   const [speedIndex, setSpeedIndex] = useState(1);
   const [autoRotate, setAutoRotate] = usePersistentState(AUTO_ROTATE_KEY, true);
@@ -244,6 +278,7 @@ export default function SatelliteExplorer() {
   const [rendezvousMaxMissKm, setRendezvousMaxMissKm] = useState(50);
   const [rendezvousHits, setRendezvousHits] = useState<RendezvousScanHit[]>([]);
   const [rendezvousScanning, setRendezvousScanning] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
   const [scanProgress, setScanProgress] = useState(0);
   const [scanAnchor, setScanAnchor] = useState<Date | null>(null);
   const [scanNonce, setScanNonce] = useState(0);
@@ -254,6 +289,8 @@ export default function SatelliteExplorer() {
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [workerObjects, setWorkerObjects] = useState<PropagatedObject[]>([]);
+  const [propagationError, setPropagationError] = useState<string | null>(null);
+  const [workerNonce, setWorkerNonce] = useState(0);
   const [watchlist, setWatchlist] = usePersistentState<string[]>(WATCHLIST_KEY, EMPTY_WATCHLIST);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const globeRef = useRef<GlobeSceneHandle>(null);
@@ -264,8 +301,9 @@ export default function SatelliteExplorer() {
   const requestIdRef = useRef(0);
   const latestRequestIdRef = useRef(0);
   const scanRequestIdRef = useRef(0);
-  const latestScanRequestIdRef = useRef(0);
   const recordsVersionRef = useRef(0);
+  const loadedGroupsRef = useRef<Record<string, LoadedGroup>>({});
+  const groupRequestsRef = useRef(new Map<string, AbortController>());
   const objectPoolRef = useRef<PropagatedObject[]>([]);
   const recordMetaRef = useRef<RecordMeta[]>([]);
   const sceneTimeRef = useRef(sceneTime);
@@ -275,12 +313,51 @@ export default function SatelliteExplorer() {
   }, [sceneTime]);
 
   useEffect(() => {
-    fetch("/api/catalogs")
-      .then((response) => response.json())
+    if (!IS_SNAPSHOT_MODE) return;
+    // Data age follows wall time, including while simulation playback is paused.
+    const update = () => setDataNowMs(Date.now());
+    const interval = window.setInterval(update, 60_000);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, DATA_REQUEST_TIMEOUT_MS);
+    fetch(catalogsDataUrl(), { signal: controller.signal })
+      .then(readApiResponse)
       .then((payload) => {
-        setCatalogs(payload.catalogs ?? []);
+        if (controller.signal.aborted) return;
+        if (!Array.isArray(payload.catalogs) || !payload.catalogs.every((catalog) =>
+          isApiObject(catalog) && AVAILABLE_CATALOGS.some((known) => known.id === catalog.id) &&
+          typeof catalog.cachedCount === "number" && Number.isFinite(catalog.cachedCount) &&
+          typeof catalog.stale === "boolean")) throw new Error("Invalid catalog response");
+        const summaries = payload.catalogs as CatalogSummary[];
+        setCatalogs(fallbackCatalogs().map((known) => {
+          const summary = summaries.find((catalog) => catalog.id === known.id);
+          return summary ? { ...known, cachedCount: summary.cachedCount,
+            fetchedAt: typeof summary.fetchedAt === "string" ? summary.fetchedAt : null,
+            checkedAt: typeof summary.checkedAt === "string" ? summary.checkedAt : null,
+            sourceUpdatedAt: typeof summary.sourceUpdatedAt === "string" ? summary.sourceUpdatedAt : null,
+            stale: summary.stale, error: typeof summary.error === "string" ? summary.error : null } : known;
+        }));
       })
-      .catch(() => setCatalogs(CATALOGS.map((catalog) => ({ ...catalog, cachedCount: 0, fetchedAt: null, sourceUpdatedAt: null, stale: true, error: null }))));
+      .catch((error: unknown) => {
+        if (controller.signal.aborted && !timedOut) return;
+        setCatalogError(timedOut ? "Catalog request timed out" : error instanceof Error ? error.message : "Unable to load catalogs");
+      })
+      .finally(() => window.clearTimeout(timeout));
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
   }, []);
 
   const toggleWatchlist = (id: string) => {
@@ -307,8 +384,18 @@ export default function SatelliteExplorer() {
   };
 
   const loadGroup = async (groupId: string, force = false) => {
-    if (loadingGroups[groupId]) return;
-    if (!force && loadedGroups[groupId]) return;
+    if (groupRequestsRef.current.has(groupId)) return;
+    if (!force && loadedGroupsRef.current[groupId]) return;
+    const catalog = AVAILABLE_CATALOGS.find((item) => item.id === groupId);
+    if (!catalog) return;
+    const controller = new AbortController();
+    groupRequestsRef.current.set(groupId, controller);
+    const isCurrentRequest = () => groupRequestsRef.current.get(groupId) === controller;
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, DATA_REQUEST_TIMEOUT_MS);
     setLoadingGroups((current) => ({ ...current, [groupId]: true }));
     setLoadErrors((current) => {
       const next = { ...current };
@@ -316,54 +403,65 @@ export default function SatelliteExplorer() {
       return next;
     });
     try {
-      const response = await fetch(`/api/gp?group=${encodeURIComponent(groupId)}`);
-      const payload = await response.json();
-      if (!response.ok && !payload.records?.length) {
-        throw new Error(payload.error ?? "Unable to load catalog");
+      const response = await fetch(groupDataUrl(groupId), { signal: controller.signal });
+      const payload = await readApiResponse(response);
+      if (!isCurrentRequest() || controller.signal.aborted) return;
+      if (!isApiObject(payload.group) || payload.group.id !== groupId ||
+          !Array.isArray(payload.records) || !payload.records.every(isOmmRecord)) {
+        throw new Error("Invalid GP catalog response");
       }
-      setLoadedGroups((current) => ({
-        ...current,
+      loadedGroupsRef.current = {
+        ...loadedGroupsRef.current,
         [groupId]: {
-          catalog: payload.group,
-          records: payload.records ?? [],
-          fetchedAt: payload.fetchedAt ?? null,
-          sourceUpdatedAt: payload.sourceUpdatedAt ?? null,
+          catalog,
+          records: payload.records,
+          fetchedAt: typeof payload.fetchedAt === "string" ? payload.fetchedAt : null,
+          checkedAt: typeof payload.checkedAt === "string" ? payload.checkedAt : null,
+          sourceUpdatedAt: typeof payload.sourceUpdatedAt === "string" ? payload.sourceUpdatedAt : null,
           stale: Boolean(payload.stale),
-          cacheState: payload.cacheState ?? "miss",
-          error: payload.error ?? null
+          cacheState: typeof payload.cacheState === "string" ? payload.cacheState : "miss",
+          error: typeof payload.error === "string" ? payload.error : null
         }
-      }));
+      };
+      setLoadedGroups(loadedGroupsRef.current);
       setCatalogs((current) =>
         current.map((catalog) =>
           catalog.id === groupId
             ? {
                 ...catalog,
-                cachedCount: payload.records?.length ?? catalog.cachedCount,
-                fetchedAt: payload.fetchedAt ?? catalog.fetchedAt,
-                sourceUpdatedAt: payload.sourceUpdatedAt ?? catalog.sourceUpdatedAt,
+                cachedCount: (payload.records as OmmRecord[]).length,
+                fetchedAt: typeof payload.fetchedAt === "string" ? payload.fetchedAt : catalog.fetchedAt,
+                checkedAt: typeof payload.checkedAt === "string" ? payload.checkedAt : null,
+                sourceUpdatedAt: typeof payload.sourceUpdatedAt === "string" ? payload.sourceUpdatedAt : catalog.sourceUpdatedAt,
                 stale: Boolean(payload.stale),
-                error: payload.error ?? null
+                error: typeof payload.error === "string" ? payload.error : null
               }
             : catalog
         )
       );
     } catch (error) {
+      if (!isCurrentRequest() || (controller.signal.aborted && !timedOut)) return;
       setLoadErrors((current) => ({
         ...current,
-        [groupId]: error instanceof Error ? error.message : "Unable to load catalog"
+        [groupId]: timedOut ? "Data request timed out" : error instanceof Error ? error.message : "Unable to load catalog"
       }));
     } finally {
-      setLoadingGroups((current) => ({ ...current, [groupId]: false }));
+      window.clearTimeout(timeout);
+      if (isCurrentRequest()) {
+        groupRequestsRef.current.delete(groupId);
+        setLoadingGroups((current) => ({ ...current, [groupId]: false }));
+      }
     }
   };
 
   const unloadGroup = (groupId: string) => {
-    setLoadedGroups((current) => {
-      if (!current[groupId]) return current;
-      const next = { ...current };
-      delete next[groupId];
-      return next;
-    });
+    groupRequestsRef.current.get(groupId)?.abort();
+    groupRequestsRef.current.delete(groupId);
+    const next = { ...loadedGroupsRef.current };
+    delete next[groupId];
+    loadedGroupsRef.current = next;
+    setLoadedGroups(next);
+    setLoadingGroups((current) => ({ ...current, [groupId]: false }));
     setLoadErrors((current) => {
       if (!current[groupId]) return current;
       const next = { ...current };
@@ -382,10 +480,15 @@ export default function SatelliteExplorer() {
   };
 
   useEffect(() => {
-    for (const catalog of CATALOGS) {
+    const requests = groupRequestsRef.current;
+    const defaults = AVAILABLE_CATALOGS.filter((item) => item.defaultSelected);
+    for (const catalog of defaults.length ? defaults : AVAILABLE_CATALOGS.slice(0, 1)) {
       void loadGroup(catalog.id);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      for (const controller of requests.values()) controller.abort();
+      requests.clear();
+    };
   }, []);
 
   useEffect(() => {
@@ -402,10 +505,10 @@ export default function SatelliteExplorer() {
 
   const indexedRecords = useMemo(() => {
     const rows: Array<{ groupId: string; record: OmmRecord; catalog: CatalogDefinition }> = [];
-    // Walk CATALOGS rather than the object's own key order so the group that
+    // Walk the available catalogs rather than key order so the group that
     // "wins" a duplicated NORAD id is deterministic regardless of the order in
     // which the groups finished loading.
-    for (const catalog of CATALOGS) {
+    for (const catalog of AVAILABLE_CATALOGS) {
       const loaded = loadedGroups[catalog.id];
       if (!loaded) continue;
       for (const record of loaded.records) {
@@ -504,11 +607,33 @@ export default function SatelliteExplorer() {
     // Orbital propagation keeps ticking every second; the rendezvous sweep runs
     // on its own worker because a full 16k-object scan takes seconds and would
     // otherwise stall the globe for that whole time.
-    const propagateWorker = new Worker(new URL("@/lib/propagationWorker.ts", import.meta.url), {
-      type: "module"
-    });
+    let propagateWorker: Worker;
+    try {
+      propagateWorker = new Worker(new URL("@/lib/propagationWorker.ts", import.meta.url), {
+        type: "module"
+      });
+    } catch (error) {
+      setPropagationError(error instanceof Error ? error.message : "Unable to start orbital worker");
+      return;
+    }
+    const failPropagation = (message: string) => {
+      if (workerRef.current !== propagateWorker) return;
+      propagateWorker.terminate();
+      workerRef.current = null;
+      setPropagationError(message);
+    };
+    propagateWorker.onerror = (event) => {
+      event.preventDefault();
+      failPropagation(event.message || "Orbital worker failed");
+    };
+    propagateWorker.onmessageerror = () => failPropagation("Invalid orbital worker message");
     propagateWorker.onmessage = (event: MessageEvent) => {
-      const msg = event.data as { type: "propagated" } & PropagationSnapshot;
+      const msg = event.data as ({ type: "propagated" } & PropagationSnapshot) |
+        { type: "workerError"; message: string };
+      if (msg.type === "workerError") {
+        failPropagation(msg.message);
+        return;
+      }
       if (msg.type !== "propagated") return;
       if (msg.requestId < latestRequestIdRef.current) return;
       // Snapshots are indexed into the worker's copy of the record set — drop
@@ -518,51 +643,24 @@ export default function SatelliteExplorer() {
       setWorkerObjects(applySnapshot(msg));
     };
 
-    const scanWorker = new Worker(new URL("@/lib/propagationWorker.ts", import.meta.url), {
-      type: "module"
-    });
-    scanWorker.onmessage = (event: MessageEvent) => {
-      const msg = event.data as
-        | { type: "scanProgress"; requestId: number; done: number; total: number }
-        | { type: "rendezvousScan"; requestId: number; atMs: number; hits: RendezvousScanHit[] };
-
-      if (msg.type === "scanProgress") {
-        if (msg.requestId !== scanRequestIdRef.current) return;
-        setScanProgress(msg.total > 0 ? msg.done / msg.total : 1);
-        return;
-      }
-      if (msg.type === "rendezvousScan") {
-        if (msg.requestId < latestScanRequestIdRef.current) return;
-        latestScanRequestIdRef.current = msg.requestId;
-        setRendezvousHits(msg.hits);
-        setRendezvousScanning(false);
-        setScanProgress(1);
-      }
-    };
-
     workerRef.current = propagateWorker;
-    scanWorkerRef.current = scanWorker;
 
     return () => {
       propagateWorker.terminate();
-      scanWorker.terminate();
-      workerRef.current = null;
-      scanWorkerRef.current = null;
+      if (workerRef.current === propagateWorker) workerRef.current = null;
     };
-  }, []);
+  }, [workerNonce]);
 
   useEffect(() => {
     recordMetaRef.current = recordMeta;
     const propagateWorker = workerRef.current;
-    const scanWorker = scanWorkerRef.current;
-    if (!propagateWorker || !scanWorker) return;
+    if (!propagateWorker) return;
 
     const version = recordsVersionRef.current + 1;
     recordsVersionRef.current = version;
     const records = indexedRecords.map((row) => ({ groupId: row.groupId, record: row.record }));
     propagateWorker.postMessage({ type: "setRecords", version, records });
-    scanWorker.postMessage({ type: "setRecords", version, records });
-  }, [indexedRecords, recordMeta]);
+  }, [indexedRecords, recordMeta, workerNonce]);
 
   useEffect(() => {
     const worker = workerRef.current;
@@ -574,11 +672,11 @@ export default function SatelliteExplorer() {
       version: recordsVersionRef.current,
       atMs: sceneTime.getTime()
     });
-  }, [sceneTime, recordMeta]);
+  }, [sceneTime, recordMeta, workerNonce]);
 
   const debrisGroupIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const catalog of CATALOGS) {
+    for (const catalog of AVAILABLE_CATALOGS) {
       if (catalog.includesDebris) ids.add(catalog.id);
     }
     return ids;
@@ -689,19 +787,62 @@ export default function SatelliteExplorer() {
   // The sweep is anchored to the scene time captured when it starts, so it is
   // driven by the selection / settings / explicit re-scan — never by the clock.
   useEffect(() => {
-    const worker = scanWorkerRef.current;
-    if (!worker || !selectedRecord) {
-      setRendezvousHits([]);
+    const requestId = ++scanRequestIdRef.current;
+    setRendezvousHits([]);
+    setScanError(null);
+    if (!selectedRecord) {
       setRendezvousScanning(false);
       setScanProgress(0);
       setScanAnchor(null);
       return;
     }
-    const requestId = ++scanRequestIdRef.current;
+    // A synchronous scan cannot process cancellation messages. Replacing its
+    // worker cancels obsolete work immediately instead of queuing more scans.
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL("@/lib/propagationWorker.ts", import.meta.url), { type: "module" });
+    } catch (error) {
+      setScanError(error instanceof Error ? error.message : "Unable to start scan worker");
+      setRendezvousScanning(false);
+      return;
+    }
+    scanWorkerRef.current = worker;
+    const isCurrentScan = () => scanWorkerRef.current === worker && scanRequestIdRef.current === requestId;
+    const failScan = (message: string) => {
+      if (!isCurrentScan()) return;
+      worker.terminate();
+      scanWorkerRef.current = null;
+      setScanError(message);
+      setRendezvousScanning(false);
+      setScanProgress(0);
+    };
+    worker.onerror = (event) => {
+      event.preventDefault();
+      failScan(event.message || "Scan worker failed");
+    };
+    worker.onmessageerror = () => failScan("Invalid scan worker message");
+    worker.onmessage = (event: MessageEvent) => {
+      const msg = event.data as
+        | { type: "scanProgress"; requestId: number; done: number; total: number }
+        | { type: "rendezvousScan"; requestId: number; atMs: number; hits: RendezvousScanHit[] }
+        | { type: "workerError"; requestId: number; message: string };
+      if (!isCurrentScan() || msg.requestId !== requestId) return;
+      if (msg.type === "workerError") {
+        failScan(msg.message);
+      } else if (msg.type === "scanProgress") {
+        setScanProgress(msg.total > 0 ? msg.done / msg.total : 1);
+      } else if (msg.type === "rendezvousScan") {
+        setRendezvousHits(msg.hits);
+        setRendezvousScanning(false);
+        setScanProgress(1);
+      }
+    };
     const startedAt = sceneTimeRef.current;
     setRendezvousScanning(true);
     setScanProgress(0);
     setScanAnchor(startedAt);
+    worker.postMessage({ type: "setRecords", version: recordsVersionRef.current,
+      records: indexedRecords.map((row) => ({ groupId: row.groupId, record: row.record })) });
     worker.postMessage({
       type: "scanRendezvous",
       requestId,
@@ -715,12 +856,17 @@ export default function SatelliteExplorer() {
         maxResults: 25
       }
     });
+    return () => {
+      worker.terminate();
+      if (scanWorkerRef.current === worker) scanWorkerRef.current = null;
+    };
   }, [
     indexedRecords,
     rendezvousMaxMissKm,
     rendezvousWindowHours,
     scanNonce,
-    selectedRecord
+    selectedRecord,
+    workerNonce
   ]);
 
   useEffect(() => {
@@ -738,14 +884,23 @@ export default function SatelliteExplorer() {
   const rescanRendezvous = () => setScanNonce((value) => value + 1);
 
   const loadAllGroups = () => {
-    for (const catalog of CATALOGS) {
+    for (const catalog of AVAILABLE_CATALOGS) {
       if (!loadedGroups[catalog.id] && !loadingGroups[catalog.id]) void loadGroup(catalog.id);
     }
   };
 
   const unloadAllGroups = () => {
+    for (const controller of groupRequestsRef.current.values()) controller.abort();
+    groupRequestsRef.current.clear();
+    loadedGroupsRef.current = {};
     setLoadedGroups({});
+    setLoadingGroups({});
     setLoadErrors({});
+  };
+
+  const retryPropagation = () => {
+    setPropagationError(null);
+    setWorkerNonce((value) => value + 1);
   };
 
   const goLive = () => {
@@ -758,7 +913,7 @@ export default function SatelliteExplorer() {
   const isLive = isPlaying && speedIndex === 1 && timeOffsetHours === 0;
   const displayCatalogs: CatalogSummary[] = catalogs.length
     ? catalogs
-    : CATALOGS.map((catalog) => ({
+    : AVAILABLE_CATALOGS.map((catalog) => ({
         ...catalog,
         cachedCount: 0,
         fetchedAt: null,
@@ -919,7 +1074,7 @@ export default function SatelliteExplorer() {
           {!leftRailCollapsed ? (
             <div className="brand-copy">
               <h1>{t.appName}</h1>
-              <p>{t.subtitle}</p>
+              <p>{t.subtitle}{IS_SNAPSHOT_MODE ? ` · ${t.dataSnapshot}` : ""}</p>
             </div>
           ) : null}
           <button
@@ -968,7 +1123,7 @@ export default function SatelliteExplorer() {
                     className="mini-button"
                     type="button"
                     onClick={unloadAllGroups}
-                    disabled={loadedGroupCount === 0}
+                    disabled={loadedGroupCount === 0 && busyGroupCount === 0}
                     title={t.unloadAll}
                   >
                     {t.unloadAll}
@@ -976,6 +1131,13 @@ export default function SatelliteExplorer() {
                   {renderPanelToggle("catalogs", t.catalogs)}
                 </span>
               </div>
+              {IS_SNAPSHOT_MODE ? <p className="empty-state">{t.snapshotHint}</p> : null}
+              {catalogError ? <p className="error-text" role="alert">{t.fetchError}: {catalogError}</p> : null}
+              {Object.entries(loadErrors).map(([groupId, error]) => (
+                <p key={groupId} className="error-text" role="alert">
+                  {AVAILABLE_CATALOGS.find((catalog) => catalog.id === groupId)?.label[locale]}: {error}
+                </p>
+              ))}
               {busyGroupCount > 0 ? (
                 <div className="load-progress" role="status" aria-live="polite">
                   <span
@@ -991,6 +1153,7 @@ export default function SatelliteExplorer() {
                     const loaded = loadedGroups[catalog.id];
                     const loading = loadingGroups[catalog.id];
                     const error = loadErrors[catalog.id] ?? loaded?.error;
+                    const fetchedAt = loaded?.fetchedAt ?? catalog.fetchedAt;
                     return (
                       <button
                         key={catalog.id}
@@ -1011,12 +1174,17 @@ export default function SatelliteExplorer() {
                             <strong>{catalog.label[locale]}</strong>
                           </span>
                           <small>{catalog.description[locale]}</small>
+                          {IS_SNAPSHOT_MODE && fetchedAt ? (
+                            <small>{t.dataFetchedAt}: <time dateTime={fetchedAt}>{formatDateTimeShort(fetchedAt)}</time></small>
+                          ) : null}
                         </span>
                         <span className="catalog-meta" aria-busy={Boolean(loading)}>
                           {loading ? <Loader2 className="spin" size={15} /> : loaded ? t.loaded : t.load}
                           <small>
                             {loaded?.records.length ?? catalog.cachedCount ?? 0} {t.objects}
                           </small>
+                          {IS_SNAPSHOT_MODE && fetchedAt && snapshotIsStale(loaded ?? catalog, dataNowMs)
+                            ? <small>{t.snapshotStale}</small> : null}
                           {error ? <AlertTriangle size={14} /> : null}
                         </span>
                       </button>
@@ -1038,7 +1206,7 @@ export default function SatelliteExplorer() {
           </div>
           <div className="metric">
             <LocateFixed size={16} />
-            <span>{formatNumber(propagated.length)}</span>
+            <span data-testid="propagated-count">{formatNumber(propagated.length)}</span>
             <small>{t.visible}</small>
           </div>
           <div className="metric wide">
@@ -1061,7 +1229,7 @@ export default function SatelliteExplorer() {
           <button className="icon-button" type="button" onClick={() => setLocale(locale === "zh" ? "en" : "zh")} title={t.language}>
             <Languages size={18} />
           </button>
-          <button className="icon-button" type="button" onClick={() => void refreshLoaded()} title={t.refresh}>
+          <button className="icon-button" type="button" onClick={() => void refreshLoaded()} title={IS_SNAPSHOT_MODE ? t.refreshSnapshot : t.refresh}>
             <RefreshCw size={18} />
           </button>
           <button className="icon-button" type="button" onClick={handleScreenshot} title={t.screenshot}>
@@ -1087,6 +1255,13 @@ export default function SatelliteExplorer() {
           sceneTime={sceneTime}
           autoRotate={autoRotate}
         />
+
+        {propagationError ? (
+          <div className="panel" role="alert" style={{ position: "absolute", top: 78, left: 16, right: 16, zIndex: 5 }}>
+            <p className="error-text">{t.propagationFailed}: {propagationError}</p>
+            <button className="text-button" type="button" onClick={retryPropagation}>{t.retry}</button>
+          </div>
+        ) : null}
 
         <div className="legend" aria-label={t.legend}>
           <span className="legend-title">{t.legend}</span>
@@ -1371,9 +1546,10 @@ export default function SatelliteExplorer() {
                             : formatNumber(rendezvousHits.length)}
                         </strong>
                       </div>
+                      {scanError ? <p className="error-text" role="alert">{t.scanFailed}: {scanError}</p> : null}
                       {!selectedRecord ? (
                         <p className="empty-state">{t.needSelection}</p>
-                      ) : rendezvousHits.length === 0 ? (
+                      ) : scanError ? null : rendezvousHits.length === 0 ? (
                         rendezvousScanning ? null : (
                           <p className="empty-state">{t.noRendezvous}</p>
                         )
@@ -1655,10 +1831,21 @@ export default function SatelliteExplorer() {
                 <>
                   {Object.values(loadedGroups).length ? (
                     Object.values(loadedGroups).map((group) => (
-                      <div key={group.catalog.id} className="status-row">
-                        <span>{group.catalog.label[locale]}</span>
-                        <strong>{group.stale ? t.stale : t.updated}</strong>
-                      </div>
+                      <Fragment key={group.catalog.id}>
+                        <div className="status-row">
+                          <span>{group.catalog.label[locale]}</span>
+                          <strong>{IS_SNAPSHOT_MODE ? <>
+                            <span>{t.dataSnapshot}</span>
+                            {snapshotIsStale(group, dataNowMs) ? <> · <span>{t.snapshotStale}</span></> : null}
+                          </> : group.stale ? t.stale : t.updated}</strong>
+                        </div>
+                        {IS_SNAPSHOT_MODE && group.sourceUpdatedAt ? (
+                          <div className="status-row">
+                            <span>{t.latestEpoch}</span>
+                            <time dateTime={group.sourceUpdatedAt}>{formatDateTimeShort(group.sourceUpdatedAt)}</time>
+                          </div>
+                        ) : null}
+                      </Fragment>
                     ))
                   ) : (
                     <p className="empty-state">{t.loading}</p>
