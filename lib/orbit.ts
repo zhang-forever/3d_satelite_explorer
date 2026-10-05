@@ -104,6 +104,9 @@ export function objectClass(record: OmmRecord): ObjectClass {
 }
 
 export function createSatrec(record: OmmRecord) {
+  const epoch = parseOmmEpoch(record.EPOCH);
+  if (!epoch) throw new Error("OMM record contains an invalid epoch");
+
   const required = [
     record.NORAD_CAT_ID,
     record.MEAN_MOTION,
@@ -119,6 +122,9 @@ export function createSatrec(record: OmmRecord) {
 
   const omm = {
     ...record,
+    // satellite.js 6 appends its own Z. Normalize explicit offsets to UTC and
+    // pass the timezone-less UTC shape it expects, rather than producing ZZ.
+    EPOCH: epoch.toISOString().slice(0, -1),
     NORAD_CAT_ID: Number(record.NORAD_CAT_ID),
     MEAN_MOTION: Number(record.MEAN_MOTION),
     ECCENTRICITY: Number(record.ECCENTRICITY),
@@ -509,7 +515,13 @@ export function sampleOrbitTrack(record: OmmRecord, start: Date, groupId: string
   const minutes = Math.min(orbitalPeriodMinutes(record), maxHours * 60);
   const samples = Math.max(80, Math.min(240, Math.round(minutes * 1.5)));
   const points: PropagatedObject[] = [];
-  const satrec = createSatrec(record);
+  let satrec: ReturnType<typeof createSatrec>;
+  try {
+    satrec = createSatrec(record);
+  } catch {
+    // A malformed catalog entry must not crash the selected-object panel.
+    return points;
+  }
   const sceneGmst = gstime(start);
 
   for (let index = 0; index <= samples; index += 1) {
@@ -662,6 +674,9 @@ export function scanRendezvous(
   });
 
   const primaryAtStart = primaryStates[0];
+  // Several candidates refine the same time interval. Share those primary
+  // propagations just as the coarse sweep shares its precomputed samples.
+  const refinedPrimaryStates = new Map<number, ReturnType<typeof propagate>>();
   const primaryNorad = String(primary.NORAD_CAT_ID);
   const hits: RendezvousScanHit[] = [];
   const seenNorad = new Set<string>([primaryNorad]);
@@ -741,7 +756,7 @@ export function scanRendezvous(
     }
 
     if (coarseBestIdx < 0) continue;
-    if (!Number.isFinite(coarseBestSq) || coarseBestSq > hitMaxSq) continue;
+    if (!Number.isFinite(coarseBestSq)) continue;
 
     const refineStart = Math.max(
       start.getTime(),
@@ -754,7 +769,10 @@ export function scanRendezvous(
 
     for (let atMs = refineStart; atMs <= refineEnd; atMs += refineStepMs) {
       const at = new Date(atMs);
-      const primaryResult = propagate(primarySatrec, at);
+      if (!refinedPrimaryStates.has(atMs)) {
+        refinedPrimaryStates.set(atMs, propagate(primarySatrec, at));
+      }
+      const primaryResult = refinedPrimaryStates.get(atMs);
       const secondaryResult = propagate(satrec, at);
       if (
         !primaryResult ||
@@ -782,7 +800,9 @@ export function scanRendezvous(
 
     const bestDist = Math.sqrt(bestDistSq);
     const bestRel = Math.sqrt(bestRelSq);
-    if (!Number.isFinite(bestDist)) continue;
+    // Coarse samples can straddle a close encounter while both lie outside
+    // the cutoff. Apply the distance threshold only after refining it.
+    if (!Number.isFinite(bestDist) || bestDistSq > hitMaxSq) continue;
 
     let currentDist = Number.NaN;
     if (primaryAtStart) {
