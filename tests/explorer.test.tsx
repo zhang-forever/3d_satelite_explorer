@@ -7,8 +7,8 @@ import { CATALOGS } from "@/lib/catalogs";
 import type { OmmRecord, RendezvousScanHit } from "@/lib/orbit";
 
 vi.mock("@/components/GlobeScene", () => ({
-  default: React.forwardRef<HTMLDivElement, { objects: unknown[] }>(function GlobeStub({ objects }, ref) {
-    return <div ref={ref} data-testid="globe-stub">{objects.length}</div>;
+  default: React.forwardRef<HTMLDivElement, { objects: { id: string; groupId: string }[]; selectedId: string | null }>(function GlobeStub({ objects, selectedId }, ref) {
+    return <div ref={ref} data-testid="globe-stub" data-selected={selectedId ?? ""} data-groups={objects.map((object) => object.groupId).join(",")} data-ids={objects.map((object) => object.id).join(",")}>{objects.length}</div>;
   })
 }));
 vi.mock("@/lib/passes", () => ({ predictPasses: () => [], azimuthToCompass: () => "N" }));
@@ -67,6 +67,33 @@ async function startScan() {
   return MockWorker.instances[1];
 }
 
+
+function snapshot(worker: MockWorker, count = 1, altitude = 420) {
+  const tick = worker.messages.filter((message) => message.type === "propagate").at(-1)!;
+  return { type: "propagated", requestId: tick.requestId, version: tick.version, atMs: tick.atMs,
+    scene: new Float32Array(count * 3), ecf: new Float32Array(count * 3),
+    geo: new Float32Array(Array.from({ length: count }, () => [0, 0, altitude]).flat()),
+    speed: new Float32Array(count).fill(7.6), flags: new Uint8Array(count).fill(1) };
+}
+
+async function loadTwoCatalogs(shared = false) {
+  installFetch();
+  vi.mocked(fetch).mockImplementation((input) => {
+    const url = String(input);
+    if (url === "/api/catalogs") return jsonResponse({ catalogs: summaries });
+    const groupId = new URL(url, "http://localhost").searchParams.get("group");
+    return jsonResponse({ group: CATALOGS.find((catalog) => catalog.id === groupId),
+      records: [groupId === "active" || shared ? record : { ...record, NORAD_CAT_ID: 99999, OBJECT_NAME: "SECOND SATELLITE" }] });
+  });
+  render(<SatelliteExplorer />);
+  await startScan();
+  fireEvent.click(screen.getByRole("button", { name: /Stations/ }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /Stations/ })).toHaveClass("active"));
+  const worker = MockWorker.instances[0];
+  act(() => worker.deliver(snapshot(worker, shared ? 1 : 2)));
+  return worker;
+}
+
 describe("explorer loading and worker recovery", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -78,6 +105,65 @@ describe("explorer loading and worker recovery", () => {
     cleanup();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("falls back to a remaining satellite when its selected catalog is unloaded", async () => {
+    const worker = await loadTwoCatalogs();
+    expect(screen.getByTestId("globe-stub")).toHaveAttribute("data-selected", "25544");
+    fireEvent.click(screen.getByRole("button", { name: /Active/ }));
+    expect(screen.getByTestId("globe-stub")).toHaveAttribute("data-ids", "99999");
+    expect(screen.getByTestId("globe-stub")).toHaveAttribute("data-selected", "99999");
+    act(() => worker.deliver(snapshot(worker)));
+    expect(screen.getByTestId("globe-stub")).toHaveAttribute("data-selected", "99999");
+  });
+
+  it("removes unloaded objects and watchlist telemetry even after propagation fails", async () => {
+    const worker = await loadTwoCatalogs();
+    fireEvent.click(screen.getByRole("button", { name: "Add to watchlist" }));
+    act(() => worker.onmessageerror?.());
+    fireEvent.click(screen.getByRole("button", { name: /Active/ }));
+    expect(screen.getByTestId("globe-stub")).toHaveAttribute("data-ids", "99999");
+    expect(screen.getByTestId("globe-stub")).toHaveAttribute("data-selected", "99999");
+    expect(document.querySelectorAll(".watchlist-panel .candidate-item.disabled")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Unload all" }));
+    expect(screen.getByTestId("globe-stub")).toHaveTextContent("0");
+    expect(screen.getByTestId("globe-stub")).toHaveAttribute("data-selected", "");
+    expect(document.querySelectorAll(".watchlist-panel .candidate-item.disabled")).toHaveLength(1);
+  });
+
+  it("ignores snapshots from a failed worker before and after retry", async () => {
+    installFetch();
+    render(<SatelliteExplorer />);
+    await startScan();
+    const worker = MockWorker.instances[0];
+    const stale = snapshot(worker, 0);
+    act(() => worker.onmessageerror?.());
+    act(() => worker.deliver(stale));
+    expect(screen.getByTestId("globe-stub")).toHaveTextContent("1");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    const replacement = MockWorker.instances.find((candidate) => candidate !== worker &&
+      candidate.messages.some((message) => message.type === "propagate"))!;
+    act(() => replacement.deliver(snapshot(replacement)));
+    // Even a late message carrying the new version must not be accepted from the retired worker.
+    act(() => worker.deliver({ ...snapshot(replacement, 0), requestId: 100000 }));
+    expect(screen.getByTestId("globe-stub")).toHaveTextContent("1");
+  });
+
+  it("preserves a selected satellite still present in another loaded catalog", async () => {
+    const worker = await loadTwoCatalogs(true);
+    expect(screen.getByTestId("globe-stub")).toHaveAttribute("data-groups", "active");
+    act(() => worker.onmessageerror?.());
+    fireEvent.click(screen.getByRole("button", { name: /Active/ }));
+    expect(screen.getByTestId("globe-stub")).toHaveAttribute("data-ids", "25544");
+    expect(screen.getByTestId("globe-stub")).toHaveAttribute("data-groups", "stations");
+    expect(screen.getByTestId("globe-stub")).toHaveAttribute("data-selected", "25544");
+  });
+
+  it("preserves selection when only a search filter hides it", async () => {
+    await loadTwoCatalogs();
+    fireEvent.change(document.querySelector(".search-box input")!, { target: { value: "SECOND" } });
+    expect(screen.getByTestId("globe-stub")).toHaveAttribute("data-ids", "99999");
+    expect(screen.getByTestId("globe-stub")).toHaveAttribute("data-selected", "25544");
   });
 
   it("loads only the default catalog until another catalog is selected", async () => {

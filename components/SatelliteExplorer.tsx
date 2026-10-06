@@ -628,6 +628,7 @@ export default function SatelliteExplorer() {
     };
     propagateWorker.onmessageerror = () => failPropagation("Invalid orbital worker message");
     propagateWorker.onmessage = (event: MessageEvent) => {
+      if (workerRef.current !== propagateWorker) return;
       const msg = event.data as ({ type: "propagated" } & PropagationSnapshot) |
         { type: "workerError"; message: string };
       if (msg.type === "workerError") {
@@ -682,11 +683,31 @@ export default function SatelliteExplorer() {
     return ids;
   }, []);
 
+  const recordByNorad = useMemo(() => {
+    const map = new Map<string, { groupId: string; record: OmmRecord; catalog: CatalogDefinition }>();
+    for (const row of indexedRecords) map.set(String(row.record.NORAD_CAT_ID), row);
+    return map;
+  }, [indexedRecords]);
+
+  const metaById = useMemo(() => new Map(recordMeta.map((meta) => [meta.id, meta])), [recordMeta]);
+
+  // Catalog membership is authoritative even while propagation is pending or
+  // failed. Keep shared NORAD ids, but never render telemetry for unloaded ids.
+  const loadedObjects = useMemo(() => {
+    const rows: PropagatedObject[] = [];
+    for (const object of workerObjects) {
+      const meta = metaById.get(object.id);
+      if (!meta) continue;
+      rows.push(object.groupId === meta.groupId ? object : { ...object, ...meta });
+    }
+    return rows;
+  }, [metaById, workerObjects]);
+
   const propagated = useMemo(() => {
     const needle = normalizeText(query);
     const rows: PropagatedObject[] = [];
 
-    for (const object of workerObjects) {
+    for (const object of loadedObjects) {
       if (needle) {
         const haystack = `${object.name} ${object.noradId} ${object.objectId ?? ""}`.toLowerCase();
         if (!haystack.includes(needle)) continue;
@@ -700,13 +721,7 @@ export default function SatelliteExplorer() {
     }
 
     return rows;
-  }, [altitudeMax, altitudeMin, classFilter, debrisGroupIds, query, showDebris, workerObjects]);
-
-  const recordByNorad = useMemo(() => {
-    const map = new Map<string, { groupId: string; record: OmmRecord; catalog: CatalogDefinition }>();
-    for (const row of indexedRecords) map.set(String(row.record.NORAD_CAT_ID), row);
-    return map;
-  }, [indexedRecords]);
+  }, [altitudeMax, altitudeMin, classFilter, debrisGroupIds, query, showDebris, loadedObjects]);
 
   const selectedRecord = useMemo(
     () => (selectedId ? recordByNorad.get(selectedId) ?? null : null),
@@ -734,11 +749,11 @@ export default function SatelliteExplorer() {
   const watchlistObjects = useMemo(() => {
     if (!watchlist.length) return [];
     const map = new Map<string, PropagatedObject>();
-    for (const obj of workerObjects) {
+    for (const obj of loadedObjects) {
       if (watchlist.includes(obj.id)) map.set(obj.id, obj);
     }
     return watchlist.map((id) => map.get(id) ?? null);
-  }, [watchlist, workerObjects]);
+  }, [watchlist, loadedObjects]);
 
   // Anchors snapped to a fixed grid: the expensive kinematics below only
   // recompute when the grid step is crossed, not on every 1 Hz clock tick.
@@ -870,8 +885,10 @@ export default function SatelliteExplorer() {
   ]);
 
   useEffect(() => {
-    if (!selectedId && propagated[0]) setSelectedId(propagated[0].id);
-  }, [propagated, selectedId]);
+    if (!selectedId || !recordByNorad.has(selectedId)) {
+      setSelectedId(propagated[0]?.id ?? null);
+    }
+  }, [propagated, recordByNorad, selectedId]);
 
   const refreshLoaded = async () => {
     await Promise.all(Object.keys(loadedGroups).map((groupId) => loadGroup(groupId, true)));
