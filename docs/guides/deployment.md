@@ -84,7 +84,7 @@ npm run start:standalone
 npm run cache:resume -- active
 ```
 
-这个命令只清除该分组的错误、下次重试时间和阻断标记，保留已有轨道记录。然后重启服务，清除进程内状态。Docker 镜像中可执行 `docker exec orbital-field node scripts/resume-source.cjs active`，再执行 `docker restart orbital-field`。其他分组使用对应的目录 ID。
+这个命令只清除该分组的错误、下次重试时间和阻断标记，保留已有轨道记录。然后重启服务，清除进程内状态。Docker 镜像中可执行 `docker exec orbital-field node scripts/data/resume-source.cjs active`，再执行 `docker restart orbital-field`。其他分组使用对应的目录 ID。
 
 数据源不可用且没有历史缓存时，无法显示真实卫星；有缓存时继续显示并标记数据过期。缓存写失败时会记录日志，并在当前进程用内存保留有效数据；这只是故障兜底，持久磁盘仍是正式发布要求。
 

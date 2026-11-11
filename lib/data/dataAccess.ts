@@ -1,4 +1,4 @@
-import { CATALOGS } from "@/lib/catalogs";
+import { CATALOGS } from "@/lib/data/catalogs";
 
 export const IS_SNAPSHOT_MODE = process.env.NEXT_PUBLIC_DATA_MODE === "snapshot";
 

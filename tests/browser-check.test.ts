@@ -7,7 +7,7 @@ import { runInNewContext } from "node:vm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(path.resolve("package.json"));
-const { readRuntimeState, configureFixture } = require("./scripts/browser-check.cjs");
+const { readRuntimeState, configureFixture } = require("./scripts/runtime/browser-check.cjs");
 const directories: string[] = [];
 
 beforeEach(() => {
@@ -130,7 +130,7 @@ describe.each(["verify-runtime.cjs", "smoke-check.cjs"])("%s integration without
     const markFailure = vi.fn((failures: { errors: string[]; badResponses: string[] }, checks: boolean[]) => {
       if (failures.errors.length || failures.badResponses.length || checks.some((check) => !check)) fakeProcess.exitCode = 1;
     });
-    const source = await readFile(path.resolve("scripts", filename), "utf8");
+    const source = await readFile(path.resolve("scripts", "runtime", filename), "utf8");
     await runInNewContext(source, {
       process: fakeProcess,
       console: { log: vi.fn(), error: (message: string) => errors.push(message) },

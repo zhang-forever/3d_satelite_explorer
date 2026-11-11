@@ -3,7 +3,7 @@ import React from "react";
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as THREE from "three";
-import GlobeScene from "@/components/GlobeScene";
+import GlobeScene from "@/components/globe/GlobeScene";
 import type { PropagatedObject } from "@/lib/orbit";
 
 const rendererSpies = vi.hoisted(() => ({ render: vi.fn(), dispose: vi.fn() }));

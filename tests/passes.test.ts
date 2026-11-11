@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OmmRecord } from "@/lib/orbit";
-import { azimuthToCompass, predictPasses } from "@/lib/passes";
+import { azimuthToCompass, predictPasses } from "@/lib/orbit/passes";
 
 const iss: OmmRecord = {
   OBJECT_NAME: "ISS (ZARYA)",

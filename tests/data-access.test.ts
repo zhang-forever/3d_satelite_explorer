@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CATALOGS } from "@/lib/catalogs";
+import { CATALOGS } from "@/lib/data/catalogs";
 
 describe("data source URLs and available catalogs", () => {
   beforeEach(() => {
@@ -11,7 +11,7 @@ describe("data source URLs and available catalogs", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   it("keeps the existing API URLs and every catalog in Node mode", async () => {
-    const source = await import("@/lib/dataAccess");
+    const source = await import("@/lib/data/dataAccess");
     expect(source.IS_SNAPSHOT_MODE).toBe(false);
     expect(source.catalogsDataUrl()).toBe("/api/catalogs");
     expect(source.groupDataUrl("active")).toBe("/api/gp?group=active");
@@ -20,7 +20,7 @@ describe("data source URLs and available catalogs", () => {
 
   it("prefixes API and texture URLs when Node is hosted under a base path", async () => {
     vi.stubEnv("NEXT_PUBLIC_BASE_PATH", "/orbital-field");
-    const source = await import("@/lib/dataAccess");
+    const source = await import("@/lib/data/dataAccess");
     expect(source.catalogsDataUrl()).toBe("/orbital-field/api/catalogs");
     expect(source.groupDataUrl("stations")).toBe("/orbital-field/api/gp?group=stations");
     expect(source.publicAssetUrl("/textures/earth_atmos_2048.jpg")).toBe("/orbital-field/textures/earth_atmos_2048.jpg");
@@ -29,7 +29,7 @@ describe("data source URLs and available catalogs", () => {
   it("uses prefixed JSON snapshots and advertises only active and stations by default", async () => {
     vi.stubEnv("NEXT_PUBLIC_DATA_MODE", "snapshot");
     vi.stubEnv("NEXT_PUBLIC_BASE_PATH", "/3d_satelite_explorer/");
-    const source = await import("@/lib/dataAccess");
+    const source = await import("@/lib/data/dataAccess");
     expect(source.IS_SNAPSHOT_MODE).toBe(true);
     expect(source.catalogsDataUrl()).toBe("/3d_satelite_explorer/data/catalogs.json");
     expect(source.groupDataUrl("active")).toBe("/3d_satelite_explorer/data/gp/active.json");
@@ -40,14 +40,14 @@ describe("data source URLs and available catalogs", () => {
   it("restricts optional snapshot groups to configured known catalogs", async () => {
     vi.stubEnv("NEXT_PUBLIC_DATA_MODE", "snapshot");
     vi.stubEnv("NEXT_PUBLIC_SNAPSHOT_GROUPS", "stations, unknown, stations");
-    const source = await import("@/lib/dataAccess");
+    const source = await import("@/lib/data/dataAccess");
     expect(source.AVAILABLE_CATALOGS.map((catalog) => catalog.id)).toEqual(["stations"]);
     expect(source.groupDataUrl("stations")).toBe("/data/gp/stations.json");
     expect(() => source.groupDataUrl("active")).toThrow("unavailable in this release");
   });
 
   it("checks static freshness against wall time and preserves upstream error flags", async () => {
-    const { snapshotIsStale } = await import("@/lib/dataAccess");
+    const { snapshotIsStale } = await import("@/lib/data/dataAccess");
     const now = Date.parse("2026-10-05T14:00:00Z");
     const snapshot = { fetchedAt: "2026-10-01T00:00:00Z", checkedAt: "2026-10-05T12:00:00Z", stale: false };
     expect(snapshotIsStale(snapshot, now)).toBe(false);

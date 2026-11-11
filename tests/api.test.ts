@@ -1,12 +1,12 @@
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CATALOGS } from "@/lib/catalogs";
+import { CATALOGS } from "@/lib/data/catalogs";
 import { GET as getGp } from "@/app/api/gp/route";
 import { GET as getCatalogs } from "@/app/api/catalogs/route";
-import { getCatalogSummaries, getGpGroup, GP_REFRESH_INTERVAL_MS } from "@/lib/celestrakCache";
-import type { CachedGpPayload } from "@/lib/celestrakCache";
+import { getCatalogSummaries, getGpGroup, GP_REFRESH_INTERVAL_MS } from "@/lib/data/celestrakCache";
+import type { CachedGpPayload } from "@/lib/data/celestrakCache";
 
-vi.mock("@/lib/celestrakCache", () => ({
+vi.mock("@/lib/data/celestrakCache", () => ({
   GP_REFRESH_INTERVAL_MS: 4 * 60 * 60 * 1000,
   getGpGroup: vi.fn(),
   getCatalogSummaries: vi.fn()

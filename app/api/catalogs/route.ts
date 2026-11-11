@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getCatalogSummaries, GP_REFRESH_INTERVAL_MS } from "@/lib/celestrakCache";
+import { getCatalogSummaries, GP_REFRESH_INTERVAL_MS } from "@/lib/data/celestrakCache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

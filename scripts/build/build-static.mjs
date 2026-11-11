@@ -3,10 +3,10 @@ import { createRequire } from "node:module";
 import { cp, lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_GROUPS, loadCatalogDefinitions, parseSnapshot, selectGroups, writeSnapshotData } from "./update-static-data.mjs";
+import { DEFAULT_GROUPS, loadCatalogDefinitions, parseSnapshot, selectGroups, writeSnapshotData } from "../data/update-static-data.mjs";
 import { validateStaticOutput } from "./validate-static-output.mjs";
 
-const root = await realpath(fileURLToPath(new URL("../", import.meta.url)));
+const root = await realpath(fileURLToPath(new URL("../../", import.meta.url)));
 const require = createRequire(import.meta.url);
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "/3d_satelite_explorer";
 if (basePath && (!/^\/[a-zA-Z0-9_/-]+$/.test(basePath) || basePath.includes("//") || basePath.endsWith("/"))) {

@@ -2,21 +2,21 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import SatelliteExplorer from "@/components/SatelliteExplorer";
-import { CATALOGS } from "@/lib/catalogs";
+import SatelliteExplorer from "@/components/explorer/SatelliteExplorer";
+import { CATALOGS } from "@/lib/data/catalogs";
 
-vi.mock("@/lib/dataAccess", async (importOriginal) => {
-  const { CATALOGS } = await import("@/lib/catalogs");
+vi.mock("@/lib/data/dataAccess", async (importOriginal) => {
+  const { CATALOGS } = await import("@/lib/data/catalogs");
   return {
-    ...await importOriginal<typeof import("@/lib/dataAccess")>(),
+    ...await importOriginal<typeof import("@/lib/data/dataAccess")>(),
     IS_SNAPSHOT_MODE: true,
     AVAILABLE_CATALOGS: CATALOGS.filter((catalog) => ["active", "stations"].includes(catalog.id)),
     catalogsDataUrl: () => "/3d_satelite_explorer/data/catalogs.json",
     groupDataUrl: (id: string) => `/3d_satelite_explorer/data/gp/${id}.json`
   };
 });
-vi.mock("@/components/GlobeScene", () => ({ default: () => <div data-testid="globe-stub" /> }));
-vi.mock("@/lib/passes", () => ({ predictPasses: () => [], azimuthToCompass: () => "N" }));
+vi.mock("@/components/globe/GlobeScene", () => ({ default: () => <div data-testid="globe-stub" /> }));
+vi.mock("@/lib/orbit/passes", () => ({ predictPasses: () => [], azimuthToCompass: () => "N" }));
 vi.mock("@/lib/orbit", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/orbit")>(), sampleOrbitTrack: () => []
 }));

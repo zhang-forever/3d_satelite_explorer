@@ -14,7 +14,7 @@
 
 当前仓库提供手动更新脚本，没有自动调度。脚本只维护选中的两个目录，正常缓存有效期为 4 小时，不预取其他分组。以后如需定时更新，运行频率和发布权限须另行确认。
 
-`scripts/update-static-data.mjs` 将记录和请求状态保存在本地 `.cache/static-data/<group>.json`，包含拒绝访问标记。迁移到其他执行环境时，需要保留这些状态；本次未配置云端缓存恢复或自动发布。
+`scripts/data/update-static-data.mjs` 将记录和请求状态保存在本地 `.cache/static-data/<group>.json`，包含拒绝访问标记。迁移到其他执行环境时，需要保留这些状态；本次未配置云端缓存恢复或自动发布。
 
 - 成功下载必须是非空、且每条记录都有效的 OMM 数组，才会替换上次数据。
 - 网络错误、无效 JSON、空数组或服务失败时，保留原记录、`fetchedAt` 和错误信息，并至少冷却 2 小时。
@@ -29,22 +29,22 @@
 
 ```bash
 npm ci --no-audit --no-fund
-node scripts/update-static-data.mjs --bootstrap-only
-node scripts/build-static.mjs
-node scripts/validate-static-output.mjs
+node scripts/data/update-static-data.mjs --bootstrap-only
+node scripts/build/build-static.mjs
+node scripts/build/validate-static-output.mjs
 ```
 
 首次准备会优先读取已验证的 `.cache/celestrak` 或现有 `public/data/gp` 文件。若本地没有保存的数据，可显式指定自己公开站点的 API 作为启动来源：
 
 ```bash
-node scripts/update-static-data.mjs --bootstrap-only --bootstrap-url https://YOUR-PUBLIC-SITE/
+node scripts/data/update-static-data.mjs --bootstrap-only --bootstrap-url https://YOUR-PUBLIC-SITE/
 ```
 
 这个启动来源仅在准备阶段由更新脚本读取，数据会复制到镜像自己的文件中；访客不会经原站代理访问数据。启动导入保留原获取时间。常规更新直接向 CelesTrak 请求，不使用启动站点。
 
 输出包括 `out/index.html`、`out/index.rsc`、`out/_next/static`、地球贴图、`out/data/catalogs.json` 和 `out/data/gp/<group>.json`。构建从此仓库源码运行 Next.js，使用独立 `.next-static` 目录，按 Pages 的项目子路径生成 Worker 和资源 URL，不复用旧生产包。
 
-`scripts/validate-static-output.mjs` 检查选定目录、记录数量和真实下载时间一致，并核对 HTML 的资源、webpack public path、RSC 与图标。页面交互与实际网络访问另由浏览器检查。
+`scripts/build/validate-static-output.mjs` 检查选定目录、记录数量和真实下载时间一致，并核对 HTML 的资源、webpack public path、RSC 与图标。页面交互与实际网络访问另由浏览器检查。
 
 ## 后续发布参考
 

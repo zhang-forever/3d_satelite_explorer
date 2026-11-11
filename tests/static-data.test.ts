@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const scriptUrl = new URL("../scripts/update-static-data.mjs", import.meta.url).href;
+const scriptUrl = new URL("../scripts/data/update-static-data.mjs", import.meta.url).href;
 const { createSnapshotUpdater, loadCatalogDefinitions, selectGroups, updateSnapshotGroups,
   validateRecords, parseSnapshot } = await import(/* @vite-ignore */ scriptUrl);
 const groups = selectGroups(await loadCatalogDefinitions(), "active,stations");

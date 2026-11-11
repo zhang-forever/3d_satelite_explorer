@@ -1,7 +1,7 @@
 import { access, mkdir } from "node:fs/promises";
 import { constants } from "node:fs";
 import { NextResponse } from "next/server";
-import { getCacheDirectory, getCatalogSummaries } from "@/lib/celestrakCache";
+import { getCacheDirectory, getCatalogSummaries } from "@/lib/data/celestrakCache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

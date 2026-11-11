@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCatalogById } from "@/lib/catalogs";
-import { getGpGroup } from "@/lib/celestrakCache";
+import { getCatalogById } from "@/lib/data/catalogs";
+import { getGpGroup } from "@/lib/data/celestrakCache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

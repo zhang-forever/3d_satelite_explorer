@@ -1,5 +1,8 @@
 export type Locale = "zh" | "en";
 
+/** Translated copy for one locale, used to type component props. */
+export type Copy = (typeof copy)["zh"];
+
 export const copy = {
   zh: {
     appName: "Orbital Field",

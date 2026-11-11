@@ -7,11 +7,11 @@ import ts from "typescript";
 export const REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 export const FAILURE_COOLDOWN_MS = 2 * 60 * 60 * 1000;
 export const DEFAULT_GROUPS = ["active", "stations"];
-export const projectRoot = fileURLToPath(new URL("../", import.meta.url));
+export const projectRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 export async function loadCatalogDefinitions(root = projectRoot) {
   // Keep the mirror's labels and upstream queries tied to the application's catalog.
-  const source = await readFile(path.join(root, "lib", "catalogs.ts"), "utf8");
+  const source = await readFile(path.join(root, "lib", "data", "catalogs.ts"), "utf8");
   const { outputText } = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   });

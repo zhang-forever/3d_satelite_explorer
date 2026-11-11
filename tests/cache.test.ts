@@ -2,8 +2,8 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CATALOGS } from "@/lib/catalogs";
-import { cacheFileFor, getCacheDirectory, getCatalogSummaries, getGpGroup } from "@/lib/celestrakCache";
+import { CATALOGS } from "@/lib/data/catalogs";
+import { cacheFileFor, getCacheDirectory, getCatalogSummaries, getGpGroup } from "@/lib/data/celestrakCache";
 import type { OmmRecord } from "@/lib/orbit";
 
 const sample: OmmRecord[] = [
@@ -192,7 +192,7 @@ describe("CelesTrak cache", () => {
     expect(stored.nextRetryAt).toBe("2026-04-28T08:00:00.000Z");
 
     vi.resetModules();
-    const reloaded = await import("@/lib/celestrakCache");
+    const reloaded = await import("@/lib/data/celestrakCache");
     const retryFetch = vi.fn(async () => new Response(JSON.stringify(sample)));
     const held = await reloaded.getGpGroup(CATALOGS[1], {
       cacheDir, fetchImpl: retryFetch, now: new Date("2026-04-28T07:59:59Z")
@@ -219,7 +219,7 @@ describe("CelesTrak cache", () => {
     expect((await storedGroup(cacheDir)).blockedStatus).toBe(status);
 
     vi.resetModules();
-    const reloaded = await import("@/lib/celestrakCache");
+    const reloaded = await import("@/lib/data/celestrakCache");
     const retryFetch = vi.fn(async () => new Response(JSON.stringify(sample)));
     const held = await reloaded.getGpGroup(CATALOGS[1], {
       cacheDir, fetchImpl: retryFetch, now: new Date("2026-04-30T06:00:00Z")

@@ -2,16 +2,16 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import SatelliteExplorer from "@/components/SatelliteExplorer";
-import { CATALOGS } from "@/lib/catalogs";
+import SatelliteExplorer from "@/components/explorer/SatelliteExplorer";
+import { CATALOGS } from "@/lib/data/catalogs";
 import type { OmmRecord, RendezvousScanHit } from "@/lib/orbit";
 
-vi.mock("@/components/GlobeScene", () => ({
+vi.mock("@/components/globe/GlobeScene", () => ({
   default: React.forwardRef<HTMLDivElement, { objects: { id: string; groupId: string }[]; selectedId: string | null }>(function GlobeStub({ objects, selectedId }, ref) {
     return <div ref={ref} data-testid="globe-stub" data-selected={selectedId ?? ""} data-groups={objects.map((object) => object.groupId).join(",")} data-ids={objects.map((object) => object.id).join(",")}>{objects.length}</div>;
   })
 }));
-vi.mock("@/lib/passes", () => ({ predictPasses: () => [], azimuthToCompass: () => "N" }));
+vi.mock("@/lib/orbit/passes", () => ({ predictPasses: () => [], azimuthToCompass: () => "N" }));
 vi.mock("@/lib/orbit", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/orbit")>(), sampleOrbitTrack: () => []
 }));

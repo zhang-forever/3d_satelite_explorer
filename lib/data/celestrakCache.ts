@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { CATALOGS, type CatalogDefinition } from "@/lib/catalogs";
+import { CATALOGS, type CatalogDefinition } from "@/lib/data/catalogs";
 import { parseOmmEpoch, type OmmRecord } from "@/lib/orbit";
 
 export type CacheState = "hit" | "updated" | "stale" | "miss";

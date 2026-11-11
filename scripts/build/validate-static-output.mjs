@@ -1,7 +1,7 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { DEFAULT_GROUPS, loadCatalogDefinitions, parseSnapshot, projectRoot, selectGroups } from "./update-static-data.mjs";
+import { DEFAULT_GROUPS, loadCatalogDefinitions, parseSnapshot, projectRoot, selectGroups } from "../data/update-static-data.mjs";
 
 export async function validateStaticOutput({ root = projectRoot, directory = path.join(root, "out"),
   basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "/3d_satelite_explorer",

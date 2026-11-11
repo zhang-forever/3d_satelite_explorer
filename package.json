@@ -8,18 +8,18 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build --webpack",
-    "build:static": "node scripts/build-static.mjs",
-    "data:update": "node scripts/update-static-data.mjs",
-    "postbuild": "node scripts/prepare-standalone.cjs",
+    "build:static": "node scripts/build/build-static.mjs",
+    "data:update": "node scripts/data/update-static-data.mjs",
+    "postbuild": "node scripts/build/prepare-standalone.cjs",
     "start": "next start",
-    "start:standalone": "node scripts/start-standalone.cjs",
+    "start:standalone": "node scripts/runtime/start-standalone.cjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "verify:smoke": "node scripts/smoke-check.cjs",
-    "verify:runtime": "node scripts/verify-runtime.cjs",
-    "cache:resume": "node scripts/resume-source.cjs"
+    "verify:smoke": "node scripts/runtime/smoke-check.cjs",
+    "verify:runtime": "node scripts/runtime/verify-runtime.cjs",
+    "cache:resume": "node scripts/data/resume-source.cjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

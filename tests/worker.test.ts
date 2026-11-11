@@ -20,7 +20,7 @@ describe("orbital worker failures", () => {
       addEventListener: (_type: string, handler: typeof handleMessage) => { handleMessage = handler; },
       postMessage: replies
     });
-    await import("@/lib/propagationWorker");
+    await import("@/lib/workers/propagationWorker");
     return { send: (data: unknown) => handleMessage({ data }), replies };
   }
 
