@@ -4,15 +4,15 @@
 
 ## 已确认的现象
 
-用户提供的中国大陆访客截图在页面加载前显示 `Sorry, you have been blocked` 和 `You are unable to access chatgpt.site`。用户未提供 Ray ID，要求按中国 IP 被托管入口拦截处理。
+用户提供的中国大陆访客截图显示，页面在加载前出现 `Sorry, you have been blocked` 和 `You are unable to access chatgpt.site`。用户未提供 Ray ID，并说明按「中国 IP 被托管入口拦截」处理。
 
-本次查询 Sites：项目仍为 `active`，访问范围为 `public`，未被 workspace admin 或 OpenAI 停用，发布版本状态为 `succeeded`。当前海外网络请求首页返回 HTTP 200，并包含正常 Orbital Field 页面。近期应用日志可见成功的数据请求，来源国家标签为 JP、US、NL；报告范围内未见应用失败。
+查询 Sites 的结果：项目仍为 `active`，访问范围为 `public`，未被 workspace admin 或 OpenAI 停用，发布状态为 `succeeded`。当前从海外网络请求首页返回 HTTP 200，页面正常；近期应用日志中有成功的数据请求，来源国家为 JP、US、NL，报告范围内未见应用侧失败。
 
 ## 结论和边界
 
 问题位于托管平台入口安全层，不能通过改动卫星传播算法、数据缓存或 React 页面解决。现有 Sites 工具不提供 `chatgpt.site` 域名的 WAF、IP 或地区规则管理。重新发布相同代码、反复切换公开权限均没有已验证的修复依据。
 
-截图没有具体拦截代码，应用日志也不是 WAF 安全事件日志。因此不能断言所有中国大陆 IP 均被禁止，或确定是某一条国家、IP、ASN、浏览器规则。按用户要求，后续发布方案以避开该托管入口限制为目标，不再索要该访客的 Ray ID 或 IP。
+截图没有具体的拦截代码，应用日志也不是 WAF 安全事件日志。因此无法断定所有中国大陆 IP 均被禁止，也无法确定触发了哪一条国家、IP、ASN 或浏览器规则。按用户要求，后续发布方案以避开该托管入口限制为目标，不再索要该访客的 Ray ID 或 IP。
 
 OpenAI 公共问题追踪存在同类未解决报告：[外部访客被安全服务拦截](https://github.com/openai/codex/issues/42950)、[默认域名与自定义域名都出现拦截](https://github.com/openai/codex/issues/34954)。这些是同类报告，不是对本次具体规则的确认。Cloudflare 官方区分了多种[安全阻断页](https://developers.cloudflare.com/rules/custom-errors/reference/error-page-types/)。
 

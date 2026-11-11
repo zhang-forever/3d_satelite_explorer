@@ -4,10 +4,10 @@
 
 <h1 align="center">🛰️ Orbital Field · 轨道场</h1>
 
-**Existing hosted version / 既有托管版本：[Orbital Field · 轨道场](https://orbital-field.zzyyss298.chatgpt.site)** — maintained separately through Sites; this GitHub merge does not update or deploy it. 托管版源码由独立 Sites 项目维护，不包含在此 GitHub checkout 中；历史发布记录见 [公开发布记录](docs/sites-publication.md)。
+> **Hosted version / 托管版本：** [Orbital Field · 轨道场](https://orbital-field.zzyyss298.chatgpt.site) — maintained as a separate Sites project; this repository neither contains its source nor deploys it. 托管版由独立的 Sites 项目维护，本仓库不包含其源码，也不会自动更新或部署它。发布记录见 [公开发布记录](docs/sites-publication.md)。
 
 <p align="center">
-  <strong>Real-time 3D tracker for 16,000+ satellites, space debris & rocket bodies — powered by live CelesTrak data, rendered in your browser.</strong>
+  <strong>A real-time 3D tracker for 16,000+ satellites, debris, and rocket bodies — live CelesTrak data, rendered in the browser.</strong>
 </p>
 
 <p align="center">
@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <a href="#-english">English</a> · <a href="#-中文">中文</a> · <a href="#getting-started">Getting Started</a> · <a href="#-features">Features</a>
+  <a href="#-english">English</a> · <a href="#-中文">中文</a> · <a href="#getting-started">Getting Started</a> · <a href="#features">Features</a>
 </p>
 
 > ⚠️ **For visualization and education only.** Orbits use SGP4 from public TLE/OMM data and are **not** suitable for operational collision avoidance.
@@ -37,28 +37,28 @@
 ### Features
 
 **🌍 3D Globe (Three.js)**
-- Textured Earth with normal/specular maps, animated clouds, atmosphere glow, and a procedural starfield.
-- Instanced rendering of up to **16,000** objects, with a distinct mesh per class: payload (bus + solar panels + dish), rocket body (cylinder + nose cone), debris (irregular tetrahedron), and unknown (sphere).
-- **Eclipse shading** — objects inside Earth's shadow are dimmed, and a day/night terminator great circle is drawn from the Sun's sub-solar point.
-- Click any object to select it (GPU raycasting); auto-rotating camera with damped `OrbitControls`.
-- For the selected object: inertial **orbit track**, **ground track** (sub-satellite trail), **footprint** coverage circle, and a highlight ring.
+- Textured Earth with normal and specular maps, drifting clouds, atmospheric glow, and a procedural starfield.
+- Instanced rendering for up to **16,000** objects, with a distinct mesh per class: payload (bus, solar panels, dish), rocket body (cylinder with nose cone), debris (irregular tetrahedron), and unknown (sphere).
+- **Eclipse shading** dims objects inside Earth's shadow, and a day/night terminator great circle is drawn from the Sun's sub-solar point.
+- Click any object to select it (GPU raycasting). The camera auto-rotates with damped `OrbitControls`.
+- The selected object gets an inertial **orbit track**, a **ground track**, a **footprint** coverage circle, and a highlight ring.
 
 **📡 Live Data & Catalogs**
-- 18 color-coded CelesTrak groups: Active, Stations, Last 30 days, Starlink, OneWeb, Planet, GPS, GLONASS, Galileo, BeiDou, Weather, Science, GEO, three debris clouds (COSMOS 2251 / IRIDIUM 33 / Fengyun-1C), Potential decays, and the GEO Protected Zone.
-- Only Active loads at startup; load/unload other groups on demand. Objects are merged into a single propagation set.
-- **Server-side cache** (`.cache/celestrak`, configurable with `CELESTRAK_CACHE_DIR`, 4-hour TTL), conditional requests, concurrent-request coalescing, atomic writes, and stale-on-error fallback. Source errors have persistent cooldowns; HTTP 403/404 stop automatic downloads until reviewed.
+- 18 color-coded CelesTrak groups: Active, Stations, Last 30 days, Starlink, OneWeb, Planet, GPS, GLONASS, Galileo, BeiDou, Weather, Science, GEO, three debris clouds (COSMOS 2251 / IRIDIUM 33 / Fengyun-1C), Potential Decays, and the GEO Protected Zone.
+- Only Active loads at startup; the rest load and unload on demand and are merged into a single propagation set.
+- **Server-side cache** (`.cache/celestrak`, overridable with `CELESTRAK_CACHE_DIR`, 4-hour TTL) with conditional requests, request coalescing, atomic writes, and stale-on-error fallback. Repeated source errors trigger persistent cooldowns; HTTP 403/404 responses stop automatic downloads until the issue is reviewed.
 
 **⏱️ Propagation & Time**
-- SGP4 via [`satellite.js`](https://github.com/shashwatak/satellite-js), executed in a **Web Worker** to keep calculation off the UI thread. Frame rate depends on the device and loaded objects.
-- Time controls: play/pause, speed multipliers (0× / 1× / 10× / 60× / 600×), a −24h…+24h scrub slider, and a "live" reset.
+- SGP4 via [`satellite.js`](https://github.com/shashwatak/satellite-js), running in a **Web Worker** so propagation stays off the UI thread. Frame rate depends on the device and the number of loaded objects.
+- Time controls: play/pause, speed multipliers (0× / 1× / 10× / 60× / 600×), a −24 h…+24 h scrub slider, and a "live" reset.
 
 **🔍 Filters**
 - Free-text search over name / NORAD ID / international designator.
 - Class filter (all / payload / debris / rocket / unknown), a debris toggle, and a min–max altitude band.
 
 **🛸 Orbit Analysis**
-- **Rendezvous scan** — scans the selected primary against every loaded object for close approaches within a chosen window (6–72 h) and miss distance (5–200 km). Reports closest-approach time, miss distance, relative speed, current separation, and sub-point.
-- **Pass prediction** — visible passes over an observer (manual lat/lon or browser geolocation) in the next 48 h, with minimum-elevation filter, rise/set azimuths, peak elevation, and duration.
+- **Rendezvous scan** — compares the selected primary against every loaded object and reports close approaches within a chosen window (6–72 h) and miss distance (5–200 km): time of closest approach, miss distance, relative speed, current separation, and sub-point.
+- **Pass prediction** — visible passes over an observer (manual lat/lon or browser geolocation) in the next 48 h, filtered by minimum elevation, with rise/set azimuths, peak elevation, and duration.
 
 **✨ Quality-of-life**
 - **Watchlist** — starred objects, persisted in `localStorage`.
@@ -68,19 +68,18 @@
 
 ### ⚡ Performance
 
-The scene ticks at 1 Hz over up to 16k displayed objects. The hot paths reduce
-per-object allocation and keep expensive work off the UI thread:
+The scene updates once per second with up to 16k objects on screen. The hot paths minimize per-object allocation and keep expensive work off the UI thread:
 
-- **Struct-of-arrays propagation.** The worker propagates into reusable
+- **Struct-of-arrays propagation.** The worker writes into reusable
   `Float32Array` buffers (`propagateBatch`) and posts one flat snapshot per
-  tick instead of 16,000 freshly allocated objects; the main thread patches a
-  pool of plain objects in place. Typed-array snapshots still incur browser
-  copying and allocation at the thread boundary.
+  update instead of allocating 16,000 objects; the main thread patches a pool
+  of plain objects in place. Typed-array snapshots still incur copying and
+  allocation at the thread boundary.
 - **Decoupled analysis cadence.** The 48 h pass list is recomputed at most once
-  a minute and the orbit track every 5 s — not on every clock tick. The
-  rendezvous sweep is driven by the selection/settings (or <kbd>S</kbd> / the
-  Rescan button) and reports progress, instead of restarting every second.
-- **Its own thread for scans.** A full 16k-object close-approach sweep takes
+  a minute, and the orbit track every 5 s, rather than on every tick. The
+  rendezvous sweep runs when the selection or settings change (or on <kbd>S</kbd>
+  / Rescan) and reports progress instead of restarting every second.
+- **A separate thread for scans.** A full 16k-object close-approach sweep takes
   seconds, so it runs on a second worker and never stalls the globe.
 - **Deterministic de-duplication.** Objects listed in several catalogs
   (Starlink is also "active") are propagated and drawn once, keyed by NORAD id.
@@ -102,7 +101,7 @@ per-object allocation and keep expensive work off the UI thread:
 
 ### Getting Started
 
-**Prerequisites:** Node.js **22.12+ (22.x)** or **24.x**. Internet access is needed at runtime for the CelesTrak GP API; the Earth textures ship locally under `public/textures/`.
+**Prerequisites:** Node.js **22.12+ (22.x)** or **24.x**. Runtime internet access is required for the CelesTrak GP API; Earth textures ship locally under `public/textures/`.
 
 ```bash
 # install dependencies
@@ -120,7 +119,7 @@ No environment variables or API keys are required — CelesTrak's GP API is publ
 
 Deploy the Next.js service to a managed Node.js host with a persistent disk; your development computer can then be shut down. Visitors download records from the hosted API and calculate/render orbits in their own browsers. Watchlists remain local to each browser.
 
-The repository includes a standalone production package, `Dockerfile`, a paid single-instance Render Blueprint (`render.yaml`), and `/api/health`. See [deployment and data guide](docs/deployment.md) for setup, persistence, recovery, and verification. The Node.js full-catalog API needs additional shared storage and a large-payload strategy before Vercel deployment. A separate [snapshot build](docs/static-mirror.md) can prepare files for static hosting; a local build does not publish them.
+The repository includes a standalone production package, a `Dockerfile`, a paid single-instance Render Blueprint (`render.yaml`), and `/api/health`. See the [deployment and data guide](docs/deployment.md) for setup, persistence, recovery, and verification. The full-catalog Node.js API needs shared storage and a large-payload strategy before it can run on Vercel. A separate [snapshot build](docs/static-mirror.md) can prepare files for static hosting; a local build does not publish them.
 
 #### 🌐 Access from Other Devices on the Same Network
 
@@ -166,7 +165,7 @@ ipconfig
 | `npm run verify:smoke` | Headless-browser smoke test: frame pacing + screenshot |
 | `npm run cache:resume -- active` | Clear a reviewed source error while preserving records; restart afterward |
 
-> Both `verify:*` scripts target a **running** server (default `http://localhost:3123`, override with `TARGET_URL`) and drive system Chrome via Playwright. Errors return a nonzero exit code. `BROWSER_CHANNEL=msedge` selects Edge. Explicit `VERIFY_GP_FIXTURE` mode verifies browser behavior with local test data; it does not verify the live source.
+> Both `verify:*` scripts target a **running** server (default `http://localhost:3123`; override with `TARGET_URL`) and drive system Chrome through Playwright. Failures return a nonzero exit code. Set `BROWSER_CHANNEL=msedge` to use Edge. `VERIFY_GP_FIXTURE` checks browser behavior against local test data; it does not verify the live data source.
 
 ### Project Structure
 
@@ -189,7 +188,7 @@ lib/
   propagationWorker.ts  # Web Worker: propagate + rendezvous scan
   format.ts             # cached Intl formatters (number / date-time)
   i18n.ts               # zh / en copy
-tests/                  # cache / orbit / passes unit tests
+tests/                  # unit, component, API, and browser-check tests
 scripts/                # headless-browser runtime verification scripts
 ```
 
@@ -228,28 +227,28 @@ Orbital data is provided by **[CelesTrak](https://celestrak.org/)** (Dr. T.S. Ke
 ### 功能特性
 
 **🌍 3D 地球 (Three.js)**
-- 带法线/高光贴图的地球、动态云层、大气辉光，以及程序生成的星空背景。
-- 实例化（InstancedMesh）渲染，最多 **16,000** 个物体，按类型使用不同几何体：载荷（本体 + 太阳能板 + 天线）、火箭体（柱体 + 锥头）、碎片（不规则四面体）、未知（球体）。
-- **地影遮蔽** —— 处于地球阴影内的物体会变暗，并依据太阳直下点绘制昼夜晨昏线大圆。
-- 点击任意物体即可选中（GPU 射线拾取）；相机自动旋转，带阻尼 `OrbitControls`。
-- 针对选中物体：惯性系轨道线、星下点轨迹、地面覆盖圈，以及高亮选择环。
+- 带法线/高光贴图的地球、动态云层、大气辉光，以及程序生成的星空。
+- 实例化（InstancedMesh）渲染，最多同时显示 **16,000** 个物体；按类型使用不同几何体：载荷（本体、太阳能板、天线）、火箭体（柱体 + 锥头）、碎片（不规则四面体）、未知（球体）。
+- **地影遮蔽**：处于地球阴影中的物体自动变暗，并根据太阳直下点绘制昼夜分界的大圆。
+- 点击任意物体即可选中（GPU 射线拾取）；相机自动旋转，`OrbitControls` 带阻尼。
+- 选中物体后显示惯性系轨道线、星下点轨迹、地面覆盖圈和高亮环。
 
 **📡 实时数据与目录**
-- 18 个带配色的 CelesTrak 分组：活跃物体、空间站、近 30 天、Starlink、OneWeb、Planet、GPS、GLONASS、Galileo、北斗、气象、科学、地球同步，三个碎片云（COSMOS 2251 / IRIDIUM 33 / 风云一号 C）、潜在再入，以及 GEO 保护区。
-- 默认只加载活跃物体，其他分组按需加载/卸载；所有已加载物体合并到统一的传播集合中。
-- **服务端缓存**（默认 `.cache/celestrak`，可用 `CELESTRAK_CACHE_DIR` 配置，4 小时有效期），支持条件请求、并发请求合并与原子写入。上游故障时回退到旧缓存并保存冷却状态；HTTP 403/404 停止自动下载，排查后人工恢复。
+- 18 个带配色的 CelesTrak 分组：活跃物体、空间站、近 30 天、Starlink、OneWeb、Planet、GPS、GLONASS、Galileo、北斗、气象、科学、地球同步、三个碎片云（COSMOS 2251 / IRIDIUM 33 / 风云一号 C）、潜在再入，以及 GEO 保护区。
+- 启动时只加载活跃物体；其他分组按需加载或卸载，全部合并进同一个传播集合。
+- **服务端缓存**（默认 `.cache/celestrak`，可用 `CELESTRAK_CACHE_DIR` 覆盖，4 小时有效期）支持条件请求、并发请求合并和原子写入。上游出错时回退到旧缓存，并记录冷却状态；遇到 HTTP 403/404 会停止自动下载，待人工排查后恢复。
 
 **⏱️ 轨道传播与时间**
-- 通过 [`satellite.js`](https://github.com/shashwatak/satellite-js) 实现 SGP4，并放在 Web Worker 中计算，保证界面流畅。
-- 时间控制：播放/暂停，倍速（0× / 1× / 10× / 60× / 600×），−24h…+24h 拖动滑块，以及"实时"复位。
+- 通过 [`satellite.js`](https://github.com/shashwatak/satellite-js) 计算 SGP4，并放在 Web Worker 中执行，避免阻塞界面。实际帧率取决于设备性能和加载规模。
+- 时间控制：播放/暂停，倍速（0× / 1× / 10× / 60× / 600×），−24 h…+24 h 拖动滑块，以及"实时"复位。
 
 **🔍 筛选**
 - 按名称 / NORAD ID / 国际编号进行文本搜索。
 - 类型筛选（全部 / 载荷 / 碎片 / 火箭体 / 未知）、碎片开关，以及高度上下限区间。
 
 **🛸 轨道分析**
-- **交会扫描** —— 在指定窗口（6–72 小时）和阈值距离（5–200 km）内，将选中的主目标与全部已加载物体逐一比对最近接近事件。输出最近接近时刻、最近距离、相对速度、当前距离，以及最近点的星下位置。
-- **过境预测** —— 计算未来 48 小时内卫星过境观测点（手动输入经纬度或使用浏览器定位）的可见过境，支持最低仰角筛选，给出升起/落下方位、最高仰角与持续时长。
+- **交会扫描**：把选中的主目标与全部已加载物体逐一比对，在指定窗口（6–72 小时）和阈值距离（5–200 km）内找出最近接近事件，输出最近接近时刻、最近距离、相对速度、当前距离和星下点位置。
+- **过境预测**：计算未来 48 小时内观测点（手动输入经纬度或浏览器定位）可见的过境，支持最低仰角筛选，给出升起/落下方位、最高仰角和持续时长。
 
 **✨ 易用性**
 - **关注列表**：为物体加星标，保存在 `localStorage`。
@@ -259,16 +258,16 @@ Orbital data is provided by **[CelesTrak](https://celestrak.org/)** (Dr. T.S. Ke
 
 ### ⚡ 性能优化
 
-场景以 1 Hz 更新最多 1.6 万个显示对象，热路径减少逐对象分配，并把昂贵计算放在独立线程中：
+场景每秒更新一次，屏幕上最多同时显示 1.6 万个物体。热路径尽量减少逐对象分配，并把昂贵计算移出主线程：
 
-- **结构化数组传播。** Worker 把结果写进可复用的 `Float32Array` 缓冲（`propagateBatch`），
-  每次心跳只投递一份扁平快照，而不是新造 16,000 个对象；主线程用对象池原地回填。
-  TypedArray 在线程间传递仍有复制和分配，实际帧率取决于设备与加载规模。
-- **分析计算与时钟解耦。** 48 小时过境列表最快每分钟、轨道轨迹每 5 秒才重算一次，
-  不再跟着每一次时钟跳动重算。交会扫描由「选中目标 / 参数变化」触发（或按 <kbd>S</kbd>、
-  点「重新扫描」），并实时显示进度，而不是每秒从头重扫一遍。
-- **扫描独占一个线程。** 全量 1.6 万目标的接近事件扫描要跑几秒，因此放在第二个 Worker 里，
-  不会卡住地球旋转。
+- **结构体拆分数组（SoA）传播。** Worker 把结果写入可复用的 `Float32Array` 缓冲（`propagateBatch`），
+  每次更新只投递一份扁平快照，而不是分配 16,000 个新对象；主线程用对象池原地回填。
+  TypedArray 在线程间传递仍有复制和分配，实际帧率取决于设备和加载规模。
+- **分析计算与时钟解耦。** 48 小时过境列表最多每分钟重算一次，轨道轨迹每 5 秒重算一次，
+  不再跟随每一次时钟更新。交会扫描只在选中目标或参数变化时触发（或按 <kbd>S</kbd>、
+  点「重新扫描」），并实时显示进度，而不是每秒从头重扫。
+- **扫描使用独立线程。** 全量 1.6 万目标的接近事件扫描需要数秒，因此放在第二个 Worker 中，
+  不会阻塞地球旋转。
 - **确定性去重。** 同时出现在多个分组里的物体（Starlink 也属于「活跃物体」）按 NORAD 编号
   只传播、只渲染一次。
 - **更省的逐帧开销。** 缓存 `Intl` 格式化器、实例矩阵一次性写入单位阵后只更新三个浮点、
@@ -301,11 +300,11 @@ npm run dev
 
 无需任何环境变量或 API 密钥 —— CelesTrak 的 GP 接口是公开的。
 
-### 发布后不用自己的电脑做服务器
+### 无需自备服务器的部署
 
-将 Next.js 服务部署到提供持久磁盘的托管平台，开发电脑即可关机。其他人打开网址，从云端读取轨道记录，再由自己的浏览器计算轨道与绘制地球。关注列表保存在各自浏览器中，目前没有跨设备同步。
+把 Next.js 服务部署到带持久磁盘的托管平台后，开发电脑即可关机。访客从云端 API 获取轨道记录，再由自己的浏览器完成轨道计算和渲染。关注列表保存在各浏览器本地，暂不支持跨设备同步。
 
-已提供 standalone 生产包、`Dockerfile`、单实例付费 Render 配置（`render.yaml`）与 `/api/health`。详细步骤见[发布与数据运行](docs/deployment.md)。Node.js 全量目录接口需要共享缓存与大响应体处理后才适合 Vercel；另有[快照构建模式](docs/static-mirror.md)可准备静态托管文件，本地构建不会自动发布。
+仓库提供 standalone 生产包、`Dockerfile`、单实例付费 Render 配置（`render.yaml`）和 `/api/health`。详细步骤见[部署与数据指南](docs/deployment.md)。Node.js 全量目录接口需要共享缓存和针对大响应的处理，才适合部署到 Vercel；另有[快照构建模式](docs/static-mirror.md)可生成静态托管文件，本地构建不会自动发布。
 
 #### 🌐 同一 WiFi 下从其他设备访问
 
@@ -351,7 +350,7 @@ ipconfig
 | `npm run verify:smoke` | 无头浏览器冒烟测试：帧率 + 截图 |
 | `npm run cache:resume -- active` | 排查后清除上游错误并保留数据，随后重启服务 |
 
-> 两个 `verify:*` 脚本都需要**先启动服务器**（默认 `http://localhost:3123`，可用 `TARGET_URL` 覆盖），通过 Playwright 驱动系统 Chrome，失败时返回非零退出码。可用 `BROWSER_CHANNEL=msedge` 改用 Edge。显式设置 `VERIFY_GP_FIXTURE` 可用本地数据检查浏览器链路，但不能证明真实数据源可用。
+> 两个 `verify:*` 脚本都需要**先启动服务器**（默认 `http://localhost:3123`，可用 `TARGET_URL` 覆盖），并通过 Playwright 驱动系统 Chrome；失败时返回非零退出码。设置 `BROWSER_CHANNEL=msedge` 可改用 Edge。`VERIFY_GP_FIXTURE` 用本地数据检查浏览器链路，不能证明真实数据源可用。
 
 ### 项目结构
 
@@ -374,7 +373,7 @@ lib/
   propagationWorker.ts  # Web Worker：传播 + 交会扫描
   format.ts             # 缓存的 Intl 格式化器（数字 / 日期时间）
   i18n.ts               # 中 / 英 文案
-tests/                  # cache / orbit / passes 单元测试
+tests/                  # 单元、组件、API 与浏览器检查测试
 scripts/                # 无头浏览器运行时校验脚本
 ```
 
