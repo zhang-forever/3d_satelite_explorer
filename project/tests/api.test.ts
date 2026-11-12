@@ -60,6 +60,22 @@ describe("GP API responses", () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
   });
 
+  it("forwards refresh=1 as a forced cache bypass", async () => {
+    vi.mocked(getGpGroup).mockResolvedValue(validEmpty);
+
+    await getGp(new NextRequest("http://localhost/api/gp?group=stations&refresh=1"));
+
+    expect(getGpGroup).toHaveBeenCalledWith(CATALOGS[1], { force: true });
+  });
+
+  it("does not force a refresh for normal requests", async () => {
+    vi.mocked(getGpGroup).mockResolvedValue(validEmpty);
+
+    await getGp(gpRequest());
+
+    expect(getGpGroup).toHaveBeenCalledWith(CATALOGS[1], { force: false });
+  });
+
   it("rejects unknown groups without requesting the source", async () => {
     const response = await getGp(gpRequest("unknown"));
 

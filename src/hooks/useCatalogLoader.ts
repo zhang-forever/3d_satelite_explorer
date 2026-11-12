@@ -81,7 +81,7 @@ export function useCatalogLoader() {
       return next;
     });
     try {
-      const response = await fetch(groupDataUrl(groupId), { signal: controller.signal });
+      const response = await fetch(groupDataUrl(groupId, force), { signal: controller.signal });
       const payload = await readApiResponse(response);
       if (!isCurrentRequest() || controller.signal.aborted) return;
       if (!isApiObject(payload.group) || payload.group.id !== groupId ||
@@ -102,6 +102,7 @@ export function useCatalogLoader() {
         }
       };
       setLoadedGroups(loadedGroupsRef.current);
+      setCatalogError(null);
       setCatalogs((current) =>
         current.map((catalog) =>
           catalog.id === groupId
@@ -153,7 +154,9 @@ export function useCatalogLoader() {
     if (loadedGroups[groupId]) {
       unloadGroup(groupId);
     } else {
-      void loadGroup(groupId);
+      // A group that previously failed should retry immediately instead of
+      // returning the stored cooldown error until the cooldown expires.
+      void loadGroup(groupId, Boolean(loadErrors[groupId]));
     }
   };
 
@@ -176,7 +179,15 @@ export function useCatalogLoader() {
 
   const loadAllGroups = () => {
     for (const catalog of AVAILABLE_CATALOGS) {
-      if (!loadedGroups[catalog.id] && !loadingGroups[catalog.id]) void loadGroup(catalog.id);
+      if (loadingGroups[catalog.id]) continue;
+      if (!loadedGroups[catalog.id]) void loadGroup(catalog.id, Boolean(loadErrors[catalog.id]));
+    }
+  };
+
+  /** Explicit retry from the error banner: bypasses the server-side cooldown. */
+  const retryAllGroups = () => {
+    for (const catalog of AVAILABLE_CATALOGS) {
+      if (!loadingGroups[catalog.id]) void loadGroup(catalog.id, true);
     }
   };
 
@@ -198,6 +209,7 @@ export function useCatalogLoader() {
     toggleGroup,
     refreshLoaded,
     loadAllGroups,
+    retryAllGroups,
     unloadAllGroups
   };
 }

@@ -36,11 +36,13 @@ export function catalogsDataUrl() {
   return publicAssetUrl(IS_SNAPSHOT_MODE ? "/data/catalogs.json" : "/api/catalogs");
 }
 
-export function groupDataUrl(groupId: string) {
+export function groupDataUrl(groupId: string, forceRefresh = false) {
   if (!AVAILABLE_CATALOGS.some((catalog) => catalog.id === groupId)) {
     throw new Error(`Catalog is unavailable in this release: ${groupId}`);
   }
-  return IS_SNAPSHOT_MODE
-    ? publicAssetUrl(`/data/gp/${encodeURIComponent(groupId)}.json`)
-    : publicAssetUrl(`/api/gp?group=${encodeURIComponent(groupId)}`);
+  if (IS_SNAPSHOT_MODE) {
+    return publicAssetUrl(`/data/gp/${encodeURIComponent(groupId)}.json`);
+  }
+  const refresh = forceRefresh ? "&refresh=1" : "";
+  return publicAssetUrl(`/api/gp?group=${encodeURIComponent(groupId)}${refresh}`);
 }

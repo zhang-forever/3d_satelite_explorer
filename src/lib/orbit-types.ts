@@ -71,7 +71,7 @@ export type RendezvousScanHit = {
   closestAt: string;
   missDistanceKm: number;
   relativeSpeedKmS: number;
-  currentDistanceKm: number;
+  currentDistanceKm: number | null;
   closestLatitudeDeg: number | null;
   closestLongitudeDeg: number | null;
   closestAltitudeKm: number | null;

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Component, type ReactNode, type ErrorInfo } from "react";
+import { Component, type ReactNode, type ErrorInfo } from "react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 
 type ErrorBoundaryProps = {
@@ -28,10 +28,9 @@ export default class ErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    // Log to external error reporting in production
-    if (process.env.NODE_ENV === "development") {
-      console.error("[ErrorBoundary]", error, errorInfo);
-    }
+    // No external reporter is configured; keep the trace in the server/client
+    // logs so a production crash is still diagnosable.
+    console.error("[ErrorBoundary]", error, errorInfo);
   }
 
   private handleReset = () => {
@@ -71,7 +70,7 @@ export default class ErrorBoundary extends Component<
               color: "#fde68a"
             }}
           >
-            {this.props.fallbackTitle ?? "Something went wrong"}
+            {this.props.fallbackTitle ?? "Something went wrong · 界面出现异常"}
           </h1>
           <p
             style={{
@@ -82,7 +81,7 @@ export default class ErrorBoundary extends Component<
             }}
           >
             {this.props.fallbackMessage ??
-              "An unexpected error occurred while rendering the 3D satellite explorer. Please try refreshing the page."}
+              "An unexpected error occurred while rendering the 3D satellite explorer. Please try refreshing the page. 渲染三维卫星浏览器时发生意外错误，请刷新页面重试。"}
           </p>
           {this.state.error ? (
             <details
@@ -141,7 +140,7 @@ export default class ErrorBoundary extends Component<
             }}
           >
             <RefreshCw size={16} aria-hidden="true" />
-            Try Again
+            Try again · 重试
           </button>
         </div>
       );

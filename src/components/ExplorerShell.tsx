@@ -24,6 +24,7 @@ import {
   sampleOrbitTrack
 } from "@/lib/orbit";
 import { predictPasses } from "@/lib/passes";
+import { localizeCatalogError } from "@/lib/errorMessages";
 import { copy, initialLocale, type Locale } from "@/lib/i18n";
 
 import { ExplorerLegend } from "./ExplorerLegend";
@@ -67,7 +68,15 @@ import { useCatalogLoader } from "@/hooks/useCatalogLoader";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import { usePropagationWorker } from "@/hooks/usePropagationWorker";
 
-export default function SatelliteExplorer() {
+function prefersReducedMotion() {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
+export default function ExplorerShell() {
   // "zh" is the SSR/hydration snapshot; the browser language is only used as a
   // client-side fallback once running, and a stored choice always wins.
   const [locale, setLocale] = usePersistentState<Locale>(LOCALE_KEY, "zh", initialLocale());
@@ -81,6 +90,7 @@ export default function SatelliteExplorer() {
     toggleGroup,
     refreshLoaded,
     loadAllGroups,
+    retryAllGroups,
     unloadAllGroups
   } = useCatalogLoader();
   const [query, setQuery] = useState("");
@@ -93,7 +103,11 @@ export default function SatelliteExplorer() {
   const [dataNowMs, setDataNowMs] = useState(() => Date.now());
   const [isPlaying, setIsPlaying] = useState(true);
   const [speedIndex, setSpeedIndex] = useState(1);
-  const [autoRotate, setAutoRotate] = usePersistentState(AUTO_ROTATE_KEY, true);
+  const [autoRotate, setAutoRotate] = usePersistentState(
+    AUTO_ROTATE_KEY,
+    true,
+    !prefersReducedMotion()
+  );
   const [leftRailCollapsed, setLeftRailCollapsed] = usePersistentState(LEFT_RAIL_KEY, false);
   const [rightRailCollapsed, setRightRailCollapsed] = usePersistentState(RIGHT_RAIL_KEY, false);
   const [collapsedPanels, setCollapsedPanels] = usePersistentState<Record<CollapsiblePanelId, boolean>>(
@@ -128,6 +142,12 @@ export default function SatelliteExplorer() {
   useEffect(() => {
     sceneTimeRef.current = sceneTime;
   }, [sceneTime]);
+
+  useEffect(() => {
+    // Keep the document language in sync so screen readers switch voices when
+    // the user toggles between Chinese and English.
+    document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
+  }, [locale]);
 
   useEffect(() => {
     if (!IS_SNAPSHOT_MODE) return;
@@ -308,7 +328,7 @@ export default function SatelliteExplorer() {
     return sampleOrbitTrack(selectedRecord.record, new Date(trackAnchorMs), selectedRecord.groupId);
   }, [selectedRecord, trackAnchorMs]);
 
-  const passesVisible = !leftRailCollapsed && !collapsedPanels.analysis && analysisTab === "passes";
+  const passesVisible = !rightRailCollapsed && !collapsedPanels.analysis && analysisTab === "passes";
   const passes = useMemo(() => {
     // A 48 h sweep is only useful while its results are visible. In particular,
     // accelerated playback crosses the scene-time minute grid every real tick.
@@ -438,6 +458,24 @@ export default function SatelliteExplorer() {
     globeRef.current?.takeScreenshot();
   };
 
+  const clampNumber = (value: number, min: number, max: number) =>
+    Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : min;
+
+  const updateAltitudeMin = (value: number) => {
+    const next = clampNumber(value, 0, 100_000);
+    setAltitudeMin(next);
+    setAltitudeMax((current) => Math.max(current, next));
+  };
+
+  const updateAltitudeMax = (value: number) => {
+    const next = clampNumber(value, 0, 100_000);
+    setAltitudeMax(next);
+    setAltitudeMin((current) => Math.min(current, next));
+  };
+
+  const updateObserverLat = (value: number) => setObserverLat(clampNumber(value, -90, 90));
+  const updateObserverLon = (value: number) => setObserverLon(clampNumber(value, -180, 180));
+
   const rescanRendezvous = () => setScanNonce((value) => value + 1);
 
   const goLive = () => {
@@ -449,6 +487,11 @@ export default function SatelliteExplorer() {
   const timeOffsetHours = Math.round((sceneTime.getTime() - Date.now()) / 3_600_000);
   const isLive = isPlaying && speedIndex === 1 && timeOffsetHours === 0;
   const displayCatalogs: CatalogSummary[] = catalogs.length ? catalogs : fallbackCatalogs();
+
+  // Keep the empty globe explainable: when nothing loaded and the last attempt
+  // failed, show the reason and a retry action over the scene itself.
+  const dataError = catalogError ?? Object.values(loadErrors)[0] ?? null;
+  const showDataError = indexedRecords.length === 0 && Boolean(dataError);
 
   // -- keyboard shortcuts --
   // Registered once: the handler reads the current catalog list and toggle
@@ -563,9 +606,11 @@ export default function SatelliteExplorer() {
             <div className="search-box">
               <Search size={17} />
               <input
+                type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={t.searchPlaceholder}
+                aria-label={t.searchPlaceholder}
               />
             </div>
 
@@ -611,7 +656,25 @@ export default function SatelliteExplorer() {
           observer={{ latitudeDeg: observerLat, longitudeDeg: observerLon }}
           sceneTime={sceneTime}
           autoRotate={autoRotate}
+          popupLabels={{
+            classification: t.classification,
+            altitude: t.altitudeKm,
+            speed: t.velocity,
+            period: t.orbitPeriod
+          }}
+          classLabel={(type) => t[type]}
         />
+
+        {showDataError ? (
+          <div className="data-alert" role="alert">
+            <span>
+              {t.fetchError}: {localizeCatalogError(t, dataError)}
+            </span>
+            <button className="text-button" type="button" onClick={retryAllGroups}>
+              {t.retry}
+            </button>
+          </div>
+        ) : null}
 
         {propagationError ? (
           <div
@@ -672,8 +735,8 @@ export default function SatelliteExplorer() {
               onShowDebrisChange={setShowDebris}
               altitudeMin={altitudeMin}
               altitudeMax={altitudeMax}
-              onAltitudeMinChange={setAltitudeMin}
-              onAltitudeMaxChange={setAltitudeMax}
+              onAltitudeMinChange={updateAltitudeMin}
+              onAltitudeMaxChange={updateAltitudeMax}
             />
 
             <AnalysisPanel
@@ -703,8 +766,8 @@ export default function SatelliteExplorer() {
               onRescan={rescanRendezvous}
               observerLat={observerLat}
               observerLon={observerLon}
-              onObserverLatChange={setObserverLat}
-              onObserverLonChange={setObserverLon}
+              onObserverLatChange={updateObserverLat}
+              onObserverLonChange={updateObserverLon}
               minElevationDeg={minElevationDeg}
               onMinElevationDegChange={setMinElevationDeg}
               locating={locating}

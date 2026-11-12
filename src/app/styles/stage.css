@@ -49,6 +49,41 @@
   bottom: 18px;
 }
 
+.data-alert {
+  position: absolute;
+  top: 78px;
+  left: 50%;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(560px, calc(100% - 32px));
+  padding: 10px 14px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(251, 113, 133, 0.35);
+  border-radius: 10px;
+  background: rgba(3, 7, 18, 0.88);
+  backdrop-filter: blur(12px);
+  color: #fecdd3;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.data-alert .text-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .data-alert {
+    top: 166px;
+    left: 16px;
+    right: 16px;
+    max-width: none;
+    transform: none;
+  }
+}
+
 .metric {
   display: flex;
   align-items: center;

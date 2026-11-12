@@ -17,6 +17,7 @@ import type { PropagatedObject } from "@/lib/orbit";
 import { formatDateTimeShort, formatNumber } from "@/lib/format";
 import type { Copy, Locale } from "@/lib/i18n";
 import type { CatalogSummary, CollapsiblePanelId, LoadedGroup } from "@/lib/explorer-types";
+import { localizeCatalogError } from "@/lib/errorMessages";
 
 import { PanelSection } from "./ExplorerPanelSection";
 
@@ -97,12 +98,13 @@ export function CatalogPanel({
       {IS_SNAPSHOT_MODE ? <p className="empty-state">{t.snapshotHint}</p> : null}
       {catalogError ? (
         <p className="error-text" role="alert">
-          {t.fetchError}: {catalogError}
+          {t.fetchError}: <span title={catalogError}>{localizeCatalogError(t, catalogError)}</span>
         </p>
       ) : null}
       {Object.entries(loadErrors).map(([groupId, error]) => (
         <p key={groupId} className="error-text" role="alert">
-          {AVAILABLE_CATALOGS.find((catalog) => catalog.id === groupId)?.label[locale]}: {error}
+          {AVAILABLE_CATALOGS.find((catalog) => catalog.id === groupId)?.label[locale]}:{" "}
+          <span title={error}>{localizeCatalogError(t, error)}</span>
         </p>
       ))}
       {busyGroupCount > 0 ? (
@@ -337,7 +339,7 @@ export function StatusPanel({
           )}
           {Object.entries(loadErrors).map(([groupId, error]) => (
             <p key={groupId} className="error-text">
-              {t.fetchError}: {error}
+              {t.fetchError}: <span title={error}>{localizeCatalogError(t, error)}</span>
             </p>
           ))}
         </>

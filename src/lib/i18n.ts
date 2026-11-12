@@ -131,7 +131,12 @@ export const copy = {
     loadAll: "全部加载",
     unloadAll: "全部卸载",
     keyboardAutoRotate: "自动旋转开关",
-    keyboardRescan: "重新扫描交会"
+    keyboardRescan: "重新扫描交会",
+    errorUpstream: "无法连接 CelesTrak 数据源",
+    errorTimeout: "CelesTrak 请求超时",
+    errorRejected: "CelesTrak 拒绝访问，已暂停自动下载",
+    errorInvalidData: "返回的数据格式无效",
+    errorCache: "本地缓存不可用"
   },
   en: {
     appName: "Orbital Field",
@@ -260,7 +265,12 @@ export const copy = {
     loadAll: "Load all",
     unloadAll: "Unload all",
     keyboardAutoRotate: "Toggle auto-rotate",
-    keyboardRescan: "Re-run rendezvous scan"
+    keyboardRescan: "Re-run rendezvous scan",
+    errorUpstream: "Cannot reach CelesTrak",
+    errorTimeout: "CelesTrak request timed out",
+    errorRejected: "CelesTrak rejected the request; automatic downloads paused",
+    errorInvalidData: "Received data was invalid",
+    errorCache: "Local cache unavailable"
   }
 } satisfies Record<Locale, Record<string, string>>;
 

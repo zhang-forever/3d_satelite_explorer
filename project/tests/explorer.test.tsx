@@ -202,18 +202,20 @@ describe("explorer loading and worker recovery", () => {
   it("shows malformed GP responses as failures and allows retry", async () => {
     const fetchMock = installFetch(() => jsonResponse({ group: CATALOGS[0], records: {} }));
     render(<SatelliteExplorer />);
-    await screen.findByRole("alert");
-    expect(screen.getByRole("alert")).toHaveTextContent("Invalid GP catalog response");
+    await screen.findAllByRole("alert");
+    // The UI shows a localized summary and keeps the raw server/client detail
+    // in the tooltip, so assert on both.
+    expect(screen.getAllByRole("alert").some((alert) => alert.textContent?.includes("Received data was invalid"))).toBe(true);
     expect(screen.getByRole("button", { name: /Active/ })).not.toHaveClass("active");
     fireEvent.click(screen.getByRole("button", { name: /Active/ }));
-    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === "/api/gp?group=active")).toHaveLength(2));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === "/api/gp?group=active&refresh=1")).toHaveLength(1));
   });
 
   it("rejects a failed HTTP response even when its body contains orbital records", async () => {
     installFetch(() => jsonResponse({ group: CATALOGS[0], records: [record], error: "Data service unavailable" }, 503));
     render(<SatelliteExplorer />);
-    await screen.findByRole("alert");
-    expect(screen.getByRole("alert")).toHaveTextContent("Data service unavailable");
+    await screen.findAllByRole("alert");
+    expect(screen.getAllByRole("alert").some((alert) => alert.textContent?.includes("Data service unavailable"))).toBe(true);
     expect(screen.getByRole("button", { name: /Active/ })).not.toHaveClass("active");
   });
 
@@ -221,7 +223,8 @@ describe("explorer loading and worker recovery", () => {
     installFetch();
     vi.mocked(fetch).mockImplementationOnce(() => jsonResponse({ catalogs: {} }));
     render(<SatelliteExplorer />);
-    await screen.findByText(/Invalid catalog response/);
+    await screen.findAllByRole("alert");
+    expect(screen.getAllByRole("alert").some((alert) => alert.textContent?.includes("Received data was invalid"))).toBe(true);
     expect(document.querySelectorAll(".catalog-item")).toHaveLength(CATALOGS.length);
   });
 
@@ -263,5 +266,26 @@ describe("explorer loading and worker recovery", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(MockWorker.instances[1].messages.find((message) => message.type === "setRecords")?.records).toHaveLength(1));
     expect(worker.terminated).toBe(true);
+  });
+
+  it("clamps observer coordinates to valid geographic ranges", async () => {
+    installFetch();
+    render(<SatelliteExplorer />);
+    fireEvent.click(screen.getByRole("button", { name: /Passes/ }));
+    const latitude = screen.getByLabelText("Lat") as HTMLInputElement;
+    fireEvent.change(latitude, { target: { value: "999" } });
+    expect(latitude.value).toBe("90");
+    const longitude = screen.getByLabelText("Lon") as HTMLInputElement;
+    fireEvent.change(longitude, { target: { value: "-999" } });
+    expect(longitude.value).toBe("-180");
+  });
+
+  it("closes the shortcuts dialog with Escape", async () => {
+    installFetch();
+    render(<SatelliteExplorer />);
+    fireEvent.keyDown(window, { key: "?" });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

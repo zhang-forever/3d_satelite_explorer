@@ -146,9 +146,11 @@ export function AnalysisPanel({
               <div className="search-box compact-search">
                 <Search size={15} />
                 <input
+                  type="search"
                   value={primaryQuery}
                   onChange={(event) => onPrimaryQueryChange(event.target.value)}
                   placeholder={t.searchTarget}
+                  aria-label={t.searchTarget}
                 />
               </div>
               {primaryCandidates.length > 0 ? (
@@ -295,7 +297,10 @@ export function AnalysisPanel({
                               {t.relativeSpeed} {hit.relativeSpeedKmS.toFixed(2)} km/s
                             </span>
                             <span>
-                              {t.currentSeparation} {formatNumber(hit.currentDistanceKm, 0)} km
+                              {t.currentSeparation}{" "}
+                              {hit.currentDistanceKm === null
+                                ? "—"
+                                : `${formatNumber(hit.currentDistanceKm, 0)} km`}
                             </span>
                           </div>
                         ) : null}

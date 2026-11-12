@@ -217,7 +217,6 @@ export function scanRendezvous(
     const record = secondary.record;
     const norad = String(record.NORAD_CAT_ID);
     if (seenNorad.has(norad)) continue;
-    seenNorad.add(norad);
 
     const epoch = parseOmmEpoch(record.EPOCH);
     if (!epoch) continue;
@@ -235,6 +234,10 @@ export function scanRendezvous(
     } catch {
       continue;
     }
+
+    // Record the id only once the candidate is usable: an unusable first
+    // duplicate must not shadow a valid one later in the list.
+    seenNorad.add(norad);
 
     let coarseBestIdx = -1;
     let coarseBestSq = Infinity;
@@ -350,7 +353,7 @@ export function scanRendezvous(
       closestAt: closestAt.toISOString(),
       missDistanceKm: bestDist,
       relativeSpeedKmS: bestRel,
-      currentDistanceKm: Number.isFinite(currentDist) ? currentDist : 0,
+      currentDistanceKm: Number.isFinite(currentDist) ? currentDist : null,
       closestLatitudeDeg,
       closestLongitudeDeg,
       closestAltitudeKm

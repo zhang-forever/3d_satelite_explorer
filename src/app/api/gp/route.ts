@@ -7,6 +7,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   const groupId = request.nextUrl.searchParams.get("group") ?? "active";
+  const force = request.nextUrl.searchParams.get("refresh") === "1";
   const catalog = getCatalogById(groupId);
 
   if (!catalog) {
@@ -17,7 +18,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const payload = await getGpGroup(catalog);
+    const payload = await getGpGroup(catalog, { force });
     const status = payload.fetchedAt === null ? 502 : 200;
     const cacheControl = status !== 200 || payload.stale || payload.error
       ? "no-store"

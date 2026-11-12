@@ -5,7 +5,8 @@ import type { CollapsiblePanelId } from "@/lib/explorer-types";
 export const RENDER_LIMIT = 16000;
 export const SPEEDS = [0, 1, 10, 60, 600];
 export const CATALOG_SHORTCUT_KEYS = [
-  "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "q", "w", "e", "r", "t", "y", "u"
+  "1", "2", "3", "4", "5", "6", "7", "8", "9", "0",
+  "q", "w", "e", "r", "t", "y", "u", "i"
 ];
 
 // localStorage keys for the persisted UI preferences.

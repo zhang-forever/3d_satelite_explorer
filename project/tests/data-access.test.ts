@@ -15,6 +15,7 @@ describe("data source URLs and available catalogs", () => {
     expect(source.IS_SNAPSHOT_MODE).toBe(false);
     expect(source.catalogsDataUrl()).toBe("/api/catalogs");
     expect(source.groupDataUrl("active")).toBe("/api/gp?group=active");
+    expect(source.groupDataUrl("active", true)).toBe("/api/gp?group=active&refresh=1");
     expect(source.AVAILABLE_CATALOGS.map((catalog) => catalog.id)).toEqual(CATALOGS.map((catalog) => catalog.id));
   });
 

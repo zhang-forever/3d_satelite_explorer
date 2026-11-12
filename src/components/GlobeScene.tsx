@@ -3,7 +3,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { CATALOGS } from "@/lib/catalogs";
 import { publicAssetUrl } from "@/lib/dataAccess";
 import {
   sunDirectionEci,
@@ -26,6 +25,20 @@ import {
   type InstancedIndexEntry
 } from "./GlobeObjects";
 
+export type GlobePopupLabels = {
+  classification: string;
+  altitude: string;
+  speed: string;
+  period: string;
+};
+
+const DEFAULT_POPUP_LABELS: GlobePopupLabels = {
+  classification: "Class",
+  altitude: "Altitude",
+  speed: "Speed",
+  period: "Period"
+};
+
 type GlobeSceneProps = {
   objects: PropagatedObject[];
   selectedId: string | null;
@@ -34,6 +47,9 @@ type GlobeSceneProps = {
   observer?: { latitudeDeg: number; longitudeDeg: number } | null;
   sceneTime: Date;
   autoRotate?: boolean;
+  /** Localized labels for the click popup; defaults to English. */
+  popupLabels?: GlobePopupLabels;
+  classLabel?: (type: ObjectClass) => string;
 };
 
 export type GlobeSceneHandle = {
@@ -49,7 +65,17 @@ const EARTH_CLOUDS = publicAssetUrl("/textures/earth_clouds_1024.png");
 
 
 export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene(
-  { objects, selectedId, track, onSelect, observer, sceneTime, autoRotate = true },
+  {
+    objects,
+    selectedId,
+    track,
+    onSelect,
+    observer,
+    sceneTime,
+    autoRotate = true,
+    popupLabels = DEFAULT_POPUP_LABELS,
+    classLabel
+  },
   ref
 ) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -789,19 +815,19 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
               <strong>{popupObject.noradId}</strong>
             </div>
             <div className="sat-popup-row">
-              <span>Class</span>
-              <strong>{popupObject.objectType}</strong>
+              <span>{popupLabels.classification}</span>
+              <strong>{classLabel ? classLabel(popupObject.objectType) : popupObject.objectType}</strong>
             </div>
             <div className="sat-popup-row">
-              <span>Altitude</span>
+              <span>{popupLabels.altitude}</span>
               <strong>{popupObject.altitudeKm.toFixed(1)} km</strong>
             </div>
             <div className="sat-popup-row">
-              <span>Speed</span>
+              <span>{popupLabels.speed}</span>
               <strong>{popupObject.speedKmS.toFixed(3)} km/s</strong>
             </div>
             <div className="sat-popup-row">
-              <span>Period</span>
+              <span>{popupLabels.period}</span>
               <strong>{orbitalPeriodMinutes(popupObject.altitudeKm).toFixed(1)} min</strong>
             </div>
           </div>

@@ -105,10 +105,10 @@ describe("pass prediction visibility", () => {
     expect(predictPasses).toHaveBeenCalledTimes(6);
     expect(vi.mocked(predictPasses).mock.calls.at(-1)![2]).toEqual(new Date("2026-10-05T12:20:00Z"));
 
-    fireEvent.click(screen.getByRole("button", { name: "Collapse left rail" }));
+    fireEvent.click(screen.getByRole("button", { name: "Collapse right rail" }));
     act(() => vi.advanceTimersByTime(1000));
     expect(predictPasses).toHaveBeenCalledTimes(6);
-    fireEvent.click(screen.getByRole("button", { name: "Expand left rail" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand right rail" }));
     expect(predictPasses).toHaveBeenCalledTimes(7);
     expect(vi.mocked(predictPasses).mock.calls.at(-1)![2]).toEqual(new Date("2026-10-05T12:30:00Z"));
 

@@ -1,5 +1,10 @@
-import SatelliteExplorer from "@/components/ExplorerShell";
+import ErrorBoundary from "@/components/ErrorBoundary";
+import ExplorerShell from "@/components/ExplorerShell";
 
 export default function Home() {
-  return <SatelliteExplorer />;
+  return (
+    <ErrorBoundary>
+      <ExplorerShell />
+    </ErrorBoundary>
+  );
 }

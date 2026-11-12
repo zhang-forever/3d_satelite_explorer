@@ -33,6 +33,8 @@ type GetGpOptions = {
   now?: Date;
   maxAgeMs?: number;
   timeoutMs?: number;
+  /** Bypass the failure cooldown for an explicit user-initiated retry. */
+  force?: boolean;
 };
 
 export const GP_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
@@ -261,8 +263,12 @@ async function loadGpGroup(group: CatalogDefinition, options: GetGpOptions, cach
   const maxAgeMs = options.maxAgeMs ?? GP_REFRESH_INTERVAL_MS;
   const cached = await readCachedGp(group, cacheDir);
 
-  // Cooldown and permanent rejections survive restarts, including a first-fetch miss.
-  if (cached?.blockedStatus || (cached?.nextRetryAt && Date.parse(cached.nextRetryAt) > now.getTime())) {
+  // Permanent rejections always win; a transient cooldown is skipped only when
+  // the user explicitly retries, otherwise a single 503 blocks retries for 2 h.
+  if (cached?.blockedStatus) {
+    return toPublicPayload(group, cached, cached.fetchedAt ? "stale" : "miss", true);
+  }
+  if (!options.force && cached?.nextRetryAt && Date.parse(cached.nextRetryAt) > now.getTime()) {
     return toPublicPayload(group, cached, cached.fetchedAt ? "stale" : "miss", true);
   }
   if (cached && isFresh(cached.fetchedAt, now, maxAgeMs)) {

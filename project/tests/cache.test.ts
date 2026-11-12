@@ -112,6 +112,33 @@ describe("CelesTrak cache", () => {
     expect(stale.error).toContain("403");
   });
 
+  it("bypasses the failure cooldown only for an explicit retry", async () => {
+    const cacheDir = await tempCacheDir();
+    const failing = vi.fn(async () => new Response("unavailable", { status: 503 }));
+
+    const first = await getGpGroup(CATALOGS[1], {
+      cacheDir, fetchImpl: failing, now: new Date("2026-04-28T06:00:00.000Z")
+    });
+    expect(first.error).toContain("503");
+    expect(failing).toHaveBeenCalledTimes(1);
+
+    // Inside the cooldown a normal request returns the stored failure.
+    const blocked = await getGpGroup(CATALOGS[1], {
+      cacheDir, fetchImpl: failing, now: new Date("2026-04-28T06:10:00.000Z")
+    });
+    expect(blocked.error).toContain("503");
+    expect(failing).toHaveBeenCalledTimes(1);
+
+    // A user-initiated retry reaches the source again.
+    const healthy = vi.fn(async () => new Response(JSON.stringify(sample), { status: 200 }));
+    const retried = await getGpGroup(CATALOGS[1], {
+      cacheDir, fetchImpl: healthy, force: true, now: new Date("2026-04-28T06:11:00.000Z")
+    });
+    expect(healthy).toHaveBeenCalledTimes(1);
+    expect(retried.cacheState).toBe("updated");
+    expect(retried.records).toHaveLength(1);
+  });
+
   it("uses the configured cache directory without changing the local default", async () => {
     const cacheDir = await tempCacheDir();
     vi.stubEnv("CELESTRAK_CACHE_DIR", cacheDir);

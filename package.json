@@ -15,8 +15,8 @@
     "start:standalone": "node project/scripts/runtime/start-standalone.cjs",
     "lint": "eslint . --config project/config/eslint.config.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --config project/config/vitest.config.ts",
-    "test:watch": "vitest --config project/config/vitest.config.ts",
+    "test": "vitest run --config project/config/vitest.config.mts",
+    "test:watch": "vitest --config project/config/vitest.config.mts",
     "verify:smoke": "node project/scripts/runtime/smoke-check.cjs",
     "verify:runtime": "node project/scripts/runtime/verify-runtime.cjs",
     "cache:resume": "node project/scripts/data/resume-source.cjs"
@@ -24,7 +24,7 @@
   "dependencies": {
     "clsx": "^2.1.1",
     "lucide-react": "^1.11.0",
-    "next": "^16.3.3",
+    "next": "^16.4.6",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "satellite.js": "^6.0.0",
@@ -38,7 +38,7 @@
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.184.0",
     "eslint": "^9.39.4",
-    "eslint-config-next": "^16.3.3",
+    "eslint-config-next": "^16.4.6",
     "jsdom": "^29.1.0",
     "playwright": "^1.59.1",
     "typescript": "^6.0.3",
