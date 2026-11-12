@@ -8,18 +8,18 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build --webpack",
-    "build:static": "node scripts/build/build-static.mjs",
-    "data:update": "node scripts/data/update-static-data.mjs",
-    "postbuild": "node scripts/build/prepare-standalone.cjs",
+    "build:static": "node project/scripts/build/build-static.mjs",
+    "data:update": "node project/scripts/data/update-static-data.mjs",
+    "postbuild": "node project/scripts/build/prepare-standalone.cjs",
     "start": "next start",
-    "start:standalone": "node scripts/runtime/start-standalone.cjs",
-    "lint": "eslint .",
+    "start:standalone": "node project/scripts/runtime/start-standalone.cjs",
+    "lint": "eslint . --config project/config/eslint.config.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "verify:smoke": "node scripts/runtime/smoke-check.cjs",
-    "verify:runtime": "node scripts/runtime/verify-runtime.cjs",
-    "cache:resume": "node scripts/data/resume-source.cjs"
+    "test": "vitest run --config project/config/vitest.config.ts",
+    "test:watch": "vitest --config project/config/vitest.config.ts",
+    "verify:smoke": "node project/scripts/runtime/smoke-check.cjs",
+    "verify:runtime": "node project/scripts/runtime/verify-runtime.cjs",
+    "cache:resume": "node project/scripts/data/resume-source.cjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

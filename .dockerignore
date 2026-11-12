@@ -7,6 +7,8 @@ node_modules
 .env.*
 coverage
 output
-docs
 *.tsbuildinfo
 npm-debug.log*
+project/tests
+project/docs
+project/config

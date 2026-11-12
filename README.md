@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/zhang-forever/3d_satelite_explorer/main/docs/assets/screenshot.png" alt="Orbital Field — Real-time 3D Satellite Tracker" width="800">
+  <img src="https://raw.githubusercontent.com/zhang-forever/3d_satelite_explorer/main/project/docs/screenshot.png" alt="Orbital Field — Real-time 3D Satellite Tracker" width="800">
 </p>
 
 <h1 align="center">🛰️ Orbital Field · 轨道场</h1>
 
-> **Hosted version / 托管版本：** [Orbital Field · 轨道场](https://orbital-field.zzyyss298.chatgpt.site) — maintained as a separate Sites project; this repository neither contains its source nor deploys it. 托管版由独立的 Sites 项目维护，本仓库不包含其源码，也不会自动更新或部署它。发布记录见 [公开发布记录](docs/operations/sites-publication.md)。
+> **Hosted version / 托管版本：** [Orbital Field · 轨道场](https://orbital-field.zzyyss298.chatgpt.site) — maintained as a separate Sites project; this repository neither contains its source nor deploys it. 托管版由独立的 Sites 项目维护，本仓库不包含其源码，也不会自动更新或部署它。发布记录见 [公开发布记录](project/docs/sites-publication.md)。
 
 <p align="center">
   <strong>A real-time 3D tracker for 16,000+ satellites, debris, and rocket bodies — live CelesTrak data, rendered in the browser.</strong>
@@ -119,7 +119,7 @@ No environment variables or API keys are required — CelesTrak's GP API is publ
 
 Deploy the Next.js service to a managed Node.js host with a persistent disk; your development computer can then be shut down. Visitors download records from the hosted API and calculate/render orbits in their own browsers. Watchlists remain local to each browser.
 
-The repository includes a standalone production package, a `Dockerfile`, a paid single-instance Render Blueprint (`render.yaml`), and `/api/health`. See the [deployment and data guide](docs/guides/deployment.md) for setup, persistence, recovery, and verification. The full-catalog Node.js API needs shared storage and a large-payload strategy before it can run on Vercel. A separate [snapshot build](docs/guides/static-mirror.md) can prepare files for static hosting; a local build does not publish them.
+The repository includes a standalone production package, a `Dockerfile`, a paid single-instance Render Blueprint (`render.yaml`), and `/api/health`. See the [deployment and data guide](project/docs/deployment.md) for setup, persistence, recovery, and verification. The full-catalog Node.js API needs shared storage and a large-payload strategy before it can run on Vercel. A separate [snapshot build](project/docs/static-mirror.md) can prepare files for static hosting; a local build does not publish them.
 
 #### 🌐 Access from Other Devices on the Same Network
 
@@ -170,36 +170,24 @@ ipconfig
 ### Project Structure
 
 ```
-app/
-  api/
-    catalogs/route.ts   # catalog summaries + cache status
-    gp/route.ts         # per-group GP/OMM fetch (cached)
-    health/route.ts     # cache permissions + source status, without downloads
-  layout.tsx            # root layout & metadata
-  page.tsx              # renders <SatelliteExplorer />
-  styles/               # CSS partials imported by globals.css
-components/
-  explorer/             # app shell, collapsible panels, persisted UI state
-    SatelliteExplorer.tsx
-    panels/
-  globe/                # Three.js scene and instanced-object helpers
-    GlobeScene.tsx
-    sceneObjects.ts
-  ui/                   # shared error boundary and skeleton
-lib/
-  orbit/                # SGP4, propagation, tracks, passes, rendezvous
-  data/                 # CelesTrak definitions, file cache, client access
-  workers/              # propagate + rendezvous-scan Web Worker
-  ui/                   # cached Intl formatters and zh / en copy
-tests/                  # unit, component, API, and browser-check tests
-scripts/
-  build/                # static snapshot build and standalone packaging
-  data/                 # catalog refresh and cache maintenance
-  runtime/              # headless-browser runtime verification
-docs/
-  guides/               # deployment and static-mirror guides
-  operations/           # release and publication records
-  assets/               # screenshots used by the README
+src/
+  app/
+    api/
+      catalogs/route.ts   # catalog summaries + cache status
+      gp/route.ts         # per-group GP/OMM fetch (cached)
+      health/route.ts     # cache permissions + source status, without downloads
+    layout.tsx            # root layout & metadata
+    page.tsx              # renders <ExplorerShell />
+    styles/               # CSS partials imported by globals.css
+  components/             # one flat folder: shell, panels, globe, shared UI
+  hooks/                  # persisted UI state, catalog loader, worker lifecycle
+  lib/                    # orbit-*, catalogs, cache, passes, i18n, format
+project/                  # repository support files (not shipped)
+  config/                 # eslint and vitest configuration
+  docs/                   # guides, release records, README screenshot
+  scripts/                # build / data / runtime scripts
+  tests/                  # unit, component, API, and browser-check tests
+public/                   # Earth textures
 ```
 
 ### How It Works
@@ -314,7 +302,7 @@ npm run dev
 
 把 Next.js 服务部署到带持久磁盘的托管平台后，开发电脑即可关机。访客从云端 API 获取轨道记录，再由自己的浏览器完成轨道计算和渲染。关注列表保存在各浏览器本地，暂不支持跨设备同步。
 
-仓库提供 standalone 生产包、`Dockerfile`、单实例付费 Render 配置（`render.yaml`）和 `/api/health`。详细步骤见[部署与数据指南](docs/guides/deployment.md)。Node.js 全量目录接口需要共享缓存和针对大响应的处理，才适合部署到 Vercel；另有[快照构建模式](docs/guides/static-mirror.md)可生成静态托管文件，本地构建不会自动发布。
+仓库提供 standalone 生产包、`Dockerfile`、单实例付费 Render 配置（`render.yaml`）和 `/api/health`。详细步骤见[部署与数据指南](project/docs/deployment.md)。Node.js 全量目录接口需要共享缓存和针对大响应的处理，才适合部署到 Vercel；另有[快照构建模式](project/docs/static-mirror.md)可生成静态托管文件，本地构建不会自动发布。
 
 #### 🌐 同一 WiFi 下从其他设备访问
 
@@ -365,36 +353,24 @@ ipconfig
 ### 项目结构
 
 ```
-app/
-  api/
-    catalogs/route.ts   # 目录摘要 + 缓存状态
-    gp/route.ts         # 按分组拉取 GP/OMM（带缓存）
-    health/route.ts     # 缓存权限与源状态，探针不会下载数据
-  layout.tsx            # 根布局与元数据
-  page.tsx              # 渲染 <SatelliteExplorer />
-  styles/               # 由 globals.css 引入的 CSS 分片
-components/
-  explorer/             # 应用主体、可折叠面板、持久化 UI 状态
-    SatelliteExplorer.tsx
-    panels/
-  globe/                # Three.js 场景与实例化物体辅助
-    GlobeScene.tsx
-    sceneObjects.ts
-  ui/                   # 通用错误边界与骨架屏
-lib/
-  orbit/                # SGP4、传播、轨迹、过境与交会计算
-  data/                 # CelesTrak 分组定义、文件缓存、客户端访问
-  workers/              # 传播 + 交会扫描 Web Worker
-  ui/                   # 缓存的 Intl 格式化器与中 / 英文案
-tests/                  # 单元、组件、API 与浏览器检查测试
-scripts/
-  build/                # 静态快照构建与 standalone 打包
-  data/                 # 目录数据刷新与缓存维护
-  runtime/              # 无头浏览器运行时校验
-docs/
-  guides/               # 部署与静态镜像指南
-  operations/           # 发布与运行记录
-  assets/               # README 使用的截图
+src/
+  app/
+    api/
+      catalogs/route.ts   # 目录摘要 + 缓存状态
+      gp/route.ts         # 按分组拉取 GP/OMM（带缓存）
+      health/route.ts     # 缓存权限与源状态，探针不会下载数据
+    layout.tsx            # 根布局与元数据
+    page.tsx              # 渲染 <ExplorerShell />
+    styles/               # 由 globals.css 引入的 CSS 分片
+  components/             # 单一扁平目录：主体、面板、地球场景、通用 UI
+  hooks/                  # 持久化 UI 状态、目录加载、Worker 生命周期
+  lib/                    # orbit-*、目录、缓存、过境、i18n、格式化
+project/                  # 仓库辅助文件（不随应用发布）
+  config/                 # eslint 与 vitest 配置
+  docs/                   # 指南、发布记录、README 截图
+  scripts/                # 构建 / 数据 / 运行时脚本
+  tests/                  # 单元、组件、API 与浏览器检查测试
+public/                   # 地球贴图
 ```
 
 ### 工作原理
