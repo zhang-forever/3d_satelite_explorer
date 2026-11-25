@@ -49,6 +49,12 @@ async function mountExplorer(select = true) {
   } } as MessageEvent));
 }
 
+
+function ensureDrawer(name: string) {
+  const button = screen.getByRole("button", { name });
+  if (button.getAttribute("aria-pressed") !== "true") fireEvent.click(button);
+}
+
 describe("pass prediction visibility", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -74,12 +80,14 @@ describe("pass prediction visibility", () => {
 
   it("does not predict without a selected object", async () => {
     await mountExplorer(false);
+    ensureDrawer("Orbit analysis");
     fireEvent.click(screen.getByRole("button", { name: "Passes" }));
     expect(predictPasses).not.toHaveBeenCalled();
   });
 
-  it("only predicts in the visible passes panel and refreshes current inputs when reopened", async () => {
+  it("only predicts while the analysis page is open and refreshes current inputs when reopened", async () => {
     await mountExplorer();
+    ensureDrawer("Orbit analysis");
     // The default tab is rendezvous, even though a primary satellite is selected.
     expect(predictPasses).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Passes" }));
@@ -96,34 +104,28 @@ describe("pass prediction visibility", () => {
       { latitudeDeg: 45, longitudeDeg: 120 }, new Date("2026-10-05T12:00:00Z"),
       { windowHours: 48, minElevationDeg: 20, maxResults: 6 });
 
-    fireEvent.click(screen.getByRole("button", { name: "Collapse Orbit analysis" }));
-    // Accelerated playback must not do hidden 48 h sweeps each real second.
+    // Closing the page must stop the sweep; accelerated playback cannot keep
+    // running 48 h predictions behind a hidden drawer.
+    fireEvent.click(screen.getByRole("button", { name: "Orbit analysis" }));
     for (let i = 0; i < 3; i += 1) fireEvent.keyDown(window, { key: "+" });
     act(() => vi.advanceTimersByTime(2000));
     expect(predictPasses).toHaveBeenCalledTimes(5);
-    fireEvent.click(screen.getByRole("button", { name: "Expand Orbit analysis" }));
+    fireEvent.click(screen.getByRole("button", { name: "Orbit analysis" }));
     expect(predictPasses).toHaveBeenCalledTimes(6);
     expect(vi.mocked(predictPasses).mock.calls.at(-1)![2]).toEqual(new Date("2026-10-05T12:20:00Z"));
 
-    fireEvent.click(screen.getByRole("button", { name: "Collapse right rail" }));
-    act(() => vi.advanceTimersByTime(1000));
-    expect(predictPasses).toHaveBeenCalledTimes(6);
-    fireEvent.click(screen.getByRole("button", { name: "Expand right rail" }));
-    expect(predictPasses).toHaveBeenCalledTimes(7);
-    expect(vi.mocked(predictPasses).mock.calls.at(-1)![2]).toEqual(new Date("2026-10-05T12:30:00Z"));
-
     fireEvent.click(screen.getByRole("button", { name: "Rendezvous" }));
     act(() => vi.advanceTimersByTime(1000));
-    expect(predictPasses).toHaveBeenCalledTimes(7);
+    expect(predictPasses).toHaveBeenCalledTimes(6);
     fireEvent.click(screen.getByRole("button", { name: "Select 25544" }));
-    expect(predictPasses).toHaveBeenCalledTimes(7);
+    expect(predictPasses).toHaveBeenCalledTimes(6);
     fireEvent.click(screen.getByRole("button", { name: "Passes" }));
-    expect(predictPasses).toHaveBeenCalledTimes(8);
+    expect(predictPasses).toHaveBeenCalledTimes(7);
     expect(predictPasses).toHaveBeenLastCalledWith(records[0],
-      { latitudeDeg: 45, longitudeDeg: 120 }, new Date("2026-10-05T12:40:00Z"),
+      { latitudeDeg: 45, longitudeDeg: 120 }, new Date("2026-10-05T12:30:00Z"),
       { windowHours: 48, minElevationDeg: 20, maxResults: 6 });
     act(() => vi.advanceTimersByTime(1000));
-    expect(predictPasses).toHaveBeenCalledTimes(9);
-    expect(vi.mocked(predictPasses).mock.calls.at(-1)![2]).toEqual(new Date("2026-10-05T12:50:00Z"));
+    expect(predictPasses).toHaveBeenCalledTimes(8);
+    expect(vi.mocked(predictPasses).mock.calls.at(-1)![2]).toEqual(new Date("2026-10-05T12:40:00Z"));
   });
 });

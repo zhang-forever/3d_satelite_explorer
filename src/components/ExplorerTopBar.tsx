@@ -2,10 +2,9 @@
 
 import clsx from "clsx";
 import {
-  Camera,
   Clock3,
   Database,
-  HelpCircle,
+  Home,
   Languages,
   LocateFixed,
   RefreshCw,
@@ -21,12 +20,13 @@ type ExplorerTopBarProps = {
   indexedCount: number;
   visibleCount: number;
   sceneTime: Date;
+  busy?: boolean;
   autoRotate: boolean;
   onToggleAutoRotate: () => void;
   onToggleLocale: () => void;
   onRefresh: () => void;
-  onScreenshot: () => void;
-  onToggleShortcuts: () => void;
+  /** Fly back to the opening overview; also leaves the chase view. */
+  onResetView: () => void;
 };
 
 export function ExplorerTopBar({
@@ -34,12 +34,12 @@ export function ExplorerTopBar({
   indexedCount,
   visibleCount,
   sceneTime,
+  busy = false,
   autoRotate,
   onToggleAutoRotate,
   onToggleLocale,
   onRefresh,
-  onScreenshot,
-  onToggleShortcuts
+  onResetView
 }: ExplorerTopBarProps) {
   return (
     <div className="topbar">
@@ -62,6 +62,15 @@ export function ExplorerTopBar({
         <span suppressHydrationWarning>{formatDateTime(sceneTime)}</span>
       </div>
       <button
+        className="icon-button"
+        type="button"
+        onClick={onResetView}
+        title={t.resetView}
+        aria-label={t.resetView}
+      >
+        <Home size={18} />
+      </button>
+      <button
         className={clsx("icon-button", autoRotate && "toggled")}
         type="button"
         onClick={onToggleAutoRotate}
@@ -77,20 +86,10 @@ export function ExplorerTopBar({
         className="icon-button"
         type="button"
         onClick={onRefresh}
+        aria-busy={busy}
         title={IS_SNAPSHOT_MODE ? t.refreshSnapshot : t.refresh}
       >
-        <RefreshCw size={18} />
-      </button>
-      <button className="icon-button" type="button" onClick={onScreenshot} title={t.screenshot}>
-        <Camera size={18} />
-      </button>
-      <button
-        className="icon-button"
-        type="button"
-        onClick={onToggleShortcuts}
-        title={t.keyboardShortcuts}
-      >
-        <HelpCircle size={18} />
+        <RefreshCw size={18} className={busy ? "spin" : undefined} />
       </button>
     </div>
   );

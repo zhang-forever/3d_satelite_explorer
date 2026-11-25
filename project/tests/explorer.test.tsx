@@ -68,6 +68,12 @@ async function startScan() {
 }
 
 
+
+function ensureDrawer(name: string) {
+  const button = screen.getByRole("button", { name });
+  if (button.getAttribute("aria-pressed") !== "true") fireEvent.click(button);
+}
+
 function snapshot(worker: MockWorker, count = 1, altitude = 420) {
   const tick = worker.messages.filter((message) => message.type === "propagate").at(-1)!;
   return { type: "propagated", requestId: tick.requestId, version: tick.version, atMs: tick.atMs,
@@ -87,6 +93,7 @@ async function loadTwoCatalogs(shared = false) {
   });
   render(<SatelliteExplorer />);
   await startScan();
+  ensureDrawer("Catalogs");
   fireEvent.click(screen.getByRole("button", { name: /Stations/ }));
   await waitFor(() => expect(screen.getByRole("button", { name: /Stations/ })).toHaveClass("active"));
   const worker = MockWorker.instances[0];
@@ -121,13 +128,17 @@ describe("explorer loading and worker recovery", () => {
     const worker = await loadTwoCatalogs();
     fireEvent.click(screen.getByRole("button", { name: "Add to watchlist" }));
     act(() => worker.onmessageerror?.());
+    ensureDrawer("Catalogs");
     fireEvent.click(screen.getByRole("button", { name: /Active/ }));
     expect(screen.getByTestId("globe-stub")).toHaveAttribute("data-ids", "99999");
     expect(screen.getByTestId("globe-stub")).toHaveAttribute("data-selected", "99999");
+    ensureDrawer("Watchlist");
     expect(document.querySelectorAll(".watchlist-panel .candidate-item.disabled")).toHaveLength(1);
+    ensureDrawer("Catalogs");
     fireEvent.click(screen.getByRole("button", { name: "Unload all" }));
     expect(screen.getByTestId("globe-stub")).toHaveTextContent("0");
     expect(screen.getByTestId("globe-stub")).toHaveAttribute("data-selected", "");
+    ensureDrawer("Watchlist");
     expect(document.querySelectorAll(".watchlist-panel .candidate-item.disabled")).toHaveLength(1);
   });
 
@@ -161,6 +172,7 @@ describe("explorer loading and worker recovery", () => {
 
   it("preserves selection when only a search filter hides it", async () => {
     await loadTwoCatalogs();
+    ensureDrawer("Search");
     fireEvent.change(document.querySelector(".search-box input")!, { target: { value: "SECOND" } });
     expect(screen.getByTestId("globe-stub")).toHaveAttribute("data-ids", "99999");
     expect(screen.getByTestId("globe-stub")).toHaveAttribute("data-selected", "25544");
@@ -169,6 +181,7 @@ describe("explorer loading and worker recovery", () => {
   it("loads only the default catalog until another catalog is selected", async () => {
     const fetchMock = installFetch();
     render(<SatelliteExplorer />);
+    ensureDrawer("Catalogs");
     await waitFor(() => expect(screen.getByRole("button", { name: /Active/ })).toHaveClass("active"));
     expect(fetchMock.mock.calls.filter(([url]) => url.startsWith("/api/gp"))).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: /Stations/ }));
@@ -193,6 +206,7 @@ describe("explorer loading and worker recovery", () => {
       return new Promise((resolve) => { reply = resolve; });
     });
     render(<SatelliteExplorer />);
+    ensureDrawer("Catalogs");
     fireEvent.click(screen.getByRole("button", { name: "Unload all" }));
     expect(requestSignal.aborted).toBe(true);
     await act(async () => reply(await jsonResponse({ group: CATALOGS[0], records: [record] })));
@@ -202,6 +216,7 @@ describe("explorer loading and worker recovery", () => {
   it("shows malformed GP responses as failures and allows retry", async () => {
     const fetchMock = installFetch(() => jsonResponse({ group: CATALOGS[0], records: {} }));
     render(<SatelliteExplorer />);
+    ensureDrawer("Catalogs");
     await screen.findAllByRole("alert");
     // The UI shows a localized summary and keeps the raw server/client detail
     // in the tooltip, so assert on both.
@@ -214,6 +229,7 @@ describe("explorer loading and worker recovery", () => {
   it("rejects a failed HTTP response even when its body contains orbital records", async () => {
     installFetch(() => jsonResponse({ group: CATALOGS[0], records: [record], error: "Data service unavailable" }, 503));
     render(<SatelliteExplorer />);
+    ensureDrawer("Catalogs");
     await screen.findAllByRole("alert");
     expect(screen.getAllByRole("alert").some((alert) => alert.textContent?.includes("Data service unavailable"))).toBe(true);
     expect(screen.getByRole("button", { name: /Active/ })).not.toHaveClass("active");
@@ -223,6 +239,7 @@ describe("explorer loading and worker recovery", () => {
     installFetch();
     vi.mocked(fetch).mockImplementationOnce(() => jsonResponse({ catalogs: {} }));
     render(<SatelliteExplorer />);
+    ensureDrawer("Catalogs");
     await screen.findAllByRole("alert");
     expect(screen.getAllByRole("alert").some((alert) => alert.textContent?.includes("Received data was invalid"))).toBe(true);
     expect(document.querySelectorAll(".catalog-item")).toHaveLength(CATALOGS.length);
@@ -232,6 +249,7 @@ describe("explorer loading and worker recovery", () => {
     installFetch();
     render(<SatelliteExplorer />);
     const oldScan = await startScan();
+    ensureDrawer("Orbit analysis");
     const oldRequest = oldScan.messages.find((message) => message.type === "scanRendezvous")!;
     const selects = screen.getAllByRole("combobox");
     const windowSelect = selects.find((element) => element.querySelector('option[value="24"]'))!;
@@ -248,6 +266,7 @@ describe("explorer loading and worker recovery", () => {
     installFetch();
     render(<SatelliteExplorer />);
     const scan = await startScan();
+    ensureDrawer("Orbit analysis");
     act(() => scan.onerror?.({ message: "scan unavailable", preventDefault() {} } as ErrorEvent));
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("scan unavailable");
@@ -271,6 +290,7 @@ describe("explorer loading and worker recovery", () => {
   it("clamps observer coordinates to valid geographic ranges", async () => {
     installFetch();
     render(<SatelliteExplorer />);
+    ensureDrawer("Orbit analysis");
     fireEvent.click(screen.getByRole("button", { name: /Passes/ }));
     const latitude = screen.getByLabelText("Lat") as HTMLInputElement;
     fireEvent.change(latitude, { target: { value: "999" } });

@@ -27,6 +27,11 @@ export function useCatalogLoader() {
 
   useEffect(() => {
     const controller = new AbortController();
+    // Development StrictMode mounts effects twice. Aborting in the cleanup
+    // would cancel a perfectly good request and show net::ERR_ABORTED in the
+    // console, so the response is ignored instead of cancelled; only the
+    // timeout may abort.
+    let active = true;
     let timedOut = false;
     const timeout = window.setTimeout(() => {
       timedOut = true;
@@ -35,7 +40,7 @@ export function useCatalogLoader() {
     fetch(catalogsDataUrl(), { signal: controller.signal })
       .then(readApiResponse)
       .then((payload) => {
-        if (controller.signal.aborted) return;
+        if (!active || controller.signal.aborted) return;
         if (!Array.isArray(payload.catalogs) || !payload.catalogs.every((catalog) =>
           isApiObject(catalog) && AVAILABLE_CATALOGS.some((known) => known.id === catalog.id) &&
           typeof catalog.cachedCount === "number" && Number.isFinite(catalog.cachedCount) &&
@@ -51,13 +56,13 @@ export function useCatalogLoader() {
         }));
       })
       .catch((error: unknown) => {
-        if (controller.signal.aborted && !timedOut) return;
+        if (!active || (controller.signal.aborted && !timedOut)) return;
         setCatalogError(timedOut ? "Catalog request timed out" : error instanceof Error ? error.message : "Unable to load catalogs");
       })
       .finally(() => window.clearTimeout(timeout));
     return () => {
+      active = false;
       window.clearTimeout(timeout);
-      controller.abort();
     };
   }, []);
 
@@ -161,15 +166,14 @@ export function useCatalogLoader() {
   };
 
   useEffect(() => {
-    const requests = groupRequestsRef.current;
     const defaults = AVAILABLE_CATALOGS.filter((item) => item.defaultSelected);
     for (const catalog of defaults.length ? defaults : AVAILABLE_CATALOGS.slice(0, 1)) {
       void loadGroup(catalog.id);
     }
-    return () => {
-      for (const controller of requests.values()) controller.abort();
-      requests.clear();
-    };
+    // No abort on cleanup: StrictMode remounts this effect immediately and
+    // cancelling the in-flight download only produced net::ERR_ABORTED. Late
+    // replies are still discarded by `isCurrentRequest`, and the timeout in
+    // `loadGroup` aborts a stalled request.
     // Load the default catalogs exactly once; loadGroup closes over refs.
   }, []);
 

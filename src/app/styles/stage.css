@@ -49,6 +49,148 @@
   bottom: 18px;
 }
 
+/* ---- first-load state -------------------------------------------------- */
+
+/* Shown over the empty globe while catalogs download and propagate. */
+.stage-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(5, 9, 15, 0.82);
+  backdrop-filter: blur(10px);
+  color: var(--muted);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.stage-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 3;
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  transform: translate(-50%, -50%);
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.stage-empty .text-button {
+  height: 34px;
+}
+
+.stage-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(125, 211, 252, 0.22);
+  border-top-color: var(--cyan);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* Interaction legend: teaches hover/click, then fades out of the way. */
+/* Chase-camera badge: names the object the view is locked to. */
+.sat-follow {
+  position: absolute;
+  top: 74px;
+  left: 50%;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 7px 6px 12px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(251, 191, 36, 0.34);
+  border-radius: 999px;
+  background: rgba(5, 9, 15, 0.84);
+  backdrop-filter: blur(12px);
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.sat-follow-text strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.sat-follow-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fbbf24;
+  box-shadow: 0 0 8px rgba(251, 191, 36, 0.9);
+  animation: follow-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes follow-pulse {
+  0%,
+  100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.sat-follow-exit {
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  border-radius: 999px;
+  background: rgba(251, 191, 36, 0.12);
+  color: #fcd34d;
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.sat-follow-exit:hover {
+  background: rgba(251, 191, 36, 0.24);
+}
+
+.stage-hint {
+  position: absolute;
+  bottom: 74px;
+  left: 50%;
+  z-index: 1;
+  padding: 0 10px;
+  transform: translateX(-50%);
+  color: rgba(148, 163, 184, 0.62);
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: hint-fade 1.2s ease 10s forwards;
+}
+
+@keyframes hint-fade {
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-hint {
+    animation: none;
+  }
+  .sat-follow-dot {
+    animation: none;
+  }
+  .stage-spinner {
+    animation-duration: 2s;
+  }
+}
+
 .data-alert {
   position: absolute;
   top: 78px;
@@ -556,9 +698,10 @@ input[type="number"] {
     display: flex;
   }
 
+  /* The globe owns the viewport; the catalog drawer slides over it on demand. */
   .stage {
     order: 1;
-    min-height: 62vh;
+    min-height: calc(100dvh - 56px);
   }
 
   .sidebar {
@@ -589,24 +732,77 @@ input[type="number"] {
   .timeline {
     left: 10px;
     right: 10px;
-    flex-wrap: wrap;
   }
 
+  /* One compact row above the globe instead of four stacked ones. */
   .topbar {
     top: 10px;
+    gap: 6px;
+    padding: 6px;
+    border-radius: 10px;
+  }
+
+  .sat-follow {
+    top: 60px;
+    max-width: calc(100% - 20px);
+    overflow: hidden;
+  }
+
+  .sat-popup.sat-popup-pinned {
+    top: 100px;
+    right: 10px;
+  }
+
+  .sat-follow-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .topbar .metric {
+    min-height: 30px;
+    padding: 0 8px;
+    gap: 5px;
+    font-size: 12px;
+  }
+
+  .topbar .metric small {
+    display: none;
+  }
+
+  /* Object totals stay in the catalog drawer; the clock takes the space. */
+  .topbar .metric:first-child {
+    display: none;
+  }
+
+  .topbar .metric.wide {
+    flex: 1;
+    min-width: 0;
+    justify-content: flex-end;
+    overflow: hidden;
+  }
+
+  .topbar .metric.wide span {
+    overflow: hidden;
+    font-size: 11px;
+    text-overflow: ellipsis;
+  }
+
+  .topbar .icon-button {
+    min-width: 32px;
+    height: 32px;
   }
 
   .timeline {
     bottom: 10px;
-  }
-
-  .metric.wide,
-  .range-label {
-    min-width: 100%;
+    flex-wrap: wrap;
   }
 
   .scene-vignette {
     background: linear-gradient(0deg, rgba(3, 7, 18, 0.78), transparent 28%, rgba(3, 7, 18, 0.5));
+  }
+
+  .stage-hint {
+    display: none;
   }
 }
 

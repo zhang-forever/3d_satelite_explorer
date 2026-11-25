@@ -76,14 +76,6 @@
   gap: 8px;
 }
 
-.catalog-swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  flex-shrink: 0;
-  box-shadow: 0 0 6px currentColor;
-}
-
 .catalog-item strong {
   overflow-wrap: anywhere;
   font-size: 13px;

@@ -4,6 +4,7 @@ import clsx from "clsx";
 import {
   ChevronDown,
   ChevronUp,
+  Crosshair,
   Download,
   Loader2,
   Radar,
@@ -400,6 +401,7 @@ type SelectedPanelProps = {
   propagatedCount: number;
   onToggleWatchlist: (id: string) => void;
   onExportOmm: () => void;
+  onFocusSelected: (id: string) => void;
 };
 
 export function SelectedPanel({
@@ -411,7 +413,8 @@ export function SelectedPanel({
   watchlist,
   propagatedCount,
   onToggleWatchlist,
-  onExportOmm
+  onExportOmm,
+  onFocusSelected
 }: SelectedPanelProps) {
   return (
     <PanelSection
@@ -433,6 +436,15 @@ export function SelectedPanel({
           <div className="selected-head">
             <h2>{selectedObject.name}</h2>
             <div className="selected-head-actions">
+              <button
+                type="button"
+                className="icon-button compact"
+                onClick={() => onFocusSelected(selectedObject.id)}
+                title={t.focusOnGlobe}
+                aria-label={t.focusOnGlobe}
+              >
+                <Crosshair size={16} />
+              </button>
               <button
                 type="button"
                 className="icon-button compact"

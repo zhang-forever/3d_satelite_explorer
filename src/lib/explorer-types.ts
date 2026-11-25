@@ -62,3 +62,13 @@ export type CollapsiblePanelId =
   | "watchlist";
 
 export type AnalysisTab = "rendezvous" | "passes";
+
+/** One page of the left rail. Exactly one drawer is open at a time. */
+export type DrawerId =
+  | "catalogs"
+  | "search"
+  | "filters"
+  | "analysis"
+  | "watchlist"
+  | "status"
+  | "tools";

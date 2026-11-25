@@ -42,6 +42,12 @@ function installSnapshotFetch(extraMetadata: Record<string, unknown> = {}) {
   return fetchMock;
 }
 
+
+function ensureDrawer(name: string) {
+  const button = screen.getByRole("button", { name });
+  if (button.getAttribute("aria-pressed") !== "true") fireEvent.click(button);
+}
+
 describe("snapshot explorer", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -57,6 +63,7 @@ describe("snapshot explorer", () => {
   it("shows only published groups and loads their JSON with the base path", async () => {
     const fetchMock = installSnapshotFetch();
     render(<SatelliteExplorer />);
+    ensureDrawer("Catalogs");
     await waitFor(() => expect(screen.getByRole("button", { name: /Active/ })).toHaveClass("active"));
     expect(document.querySelectorAll(".catalog-item")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: /Starlink/ })).not.toBeInTheDocument();
@@ -71,12 +78,13 @@ describe("snapshot explorer", () => {
   it("identifies snapshot refresh and preserves the published fetch and epoch timestamps", async () => {
     const fetchMock = installSnapshotFetch();
     render(<SatelliteExplorer />);
+    ensureDrawer("Catalogs");
     await waitFor(() => expect(screen.getByRole("button", { name: /Active/ })).toHaveClass("active"));
     expect(screen.getByText("Published data snapshot; refresh only reloads that snapshot.")).toBeInTheDocument();
     expect(document.querySelector(`time[datetime="${publishedFetchedAt}"]`)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Reload published snapshot" }));
     await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url.endsWith("/active.json"))).toHaveLength(2));
-    fireEvent.click(screen.getByRole("button", { name: "Expand Data status" }));
+    ensureDrawer("Data status");
     expect(screen.getByText("Data snapshot", { exact: true })).toBeInTheDocument();
     expect(document.querySelector(`time[datetime="${orbitalEpoch}"]`)).toBeInTheDocument();
     expect(document.querySelector(`time[datetime="${publishedFetchedAt}"]`)).toBeInTheDocument();
@@ -86,6 +94,7 @@ describe("snapshot explorer", () => {
   it("marks an old published snapshot stale even when its static metadata says fresh", async () => {
     installSnapshotFetch();
     render(<SatelliteExplorer />);
+    ensureDrawer("Catalogs");
     await waitFor(() => expect(screen.getByRole("button", { name: /Active/ })).toHaveClass("active"));
     expect(screen.getAllByText("Snapshot out of date").length).toBeGreaterThan(0);
   });
@@ -96,6 +105,7 @@ describe("snapshot explorer", () => {
     vi.setSystemTime(new Date("2026-10-05T13:59:30.000Z"));
     installSnapshotFetch({ checkedAt });
     await act(async () => { render(<SatelliteExplorer />); });
+    ensureDrawer("Catalogs");
     expect(screen.queryByText("Snapshot out of date")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Pause" }));
     act(() => vi.advanceTimersByTime(60_000));

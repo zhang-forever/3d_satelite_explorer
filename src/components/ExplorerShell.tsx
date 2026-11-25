@@ -2,14 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import {
-  PanelLeftClose,
-  PanelLeftOpen,
-  PanelRightClose,
-  PanelRightOpen,
-  Satellite,
-  Search
-} from "lucide-react";
+import { PanelRightClose, PanelRightOpen } from "lucide-react";
 
 import GlobeScene, { type GlobeSceneHandle } from "@/components/GlobeScene";
 import type { CatalogDefinition } from "@/lib/catalogs";
@@ -27,7 +20,11 @@ import { predictPasses } from "@/lib/passes";
 import { localizeCatalogError } from "@/lib/errorMessages";
 import { copy, initialLocale, type Locale } from "@/lib/i18n";
 
+import { ExplorerDrawer } from "./ExplorerDrawer";
 import { ExplorerLegend } from "./ExplorerLegend";
+import { ExplorerRail } from "./ExplorerRail";
+import { ExplorerSearch } from "./ExplorerSearch";
+import { ExplorerTools } from "./ExplorerTools";
 import { ExplorerTopBar } from "./ExplorerTopBar";
 import { ShortcutsOverlay } from "./ExplorerShortcuts";
 import { TimeTimeline } from "./ExplorerTimeline";
@@ -36,11 +33,9 @@ import {
   AUTO_ROTATE_KEY,
   CATALOG_SHORTCUT_KEYS,
   CLASS_FILTER_KEY,
-  DEFAULT_COLLAPSED_PANELS,
+  DRAWER_KEY,
   EMPTY_WATCHLIST,
-  LEFT_RAIL_KEY,
   LOCALE_KEY,
-  PANELS_KEY,
   PASSES_TICK_MS,
   RENDER_LIMIT,
   RIGHT_RAIL_KEY,
@@ -52,7 +47,7 @@ import {
 import type {
   AnalysisTab,
   CatalogSummary,
-  CollapsiblePanelId,
+  DrawerId,
   IndexedRecord,
   RecordMeta
 } from "@/lib/explorer-types";
@@ -74,6 +69,15 @@ function prefersReducedMotion() {
     typeof window.matchMedia === "function" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches
   );
+}
+
+/**
+ * Phones get the globe first: the catalog drawer is one tap away on the rail,
+ * but covering the entire scene on first paint hides the point of the app.
+ */
+function initialDrawer(): DrawerId | null {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return "catalogs";
+  return window.matchMedia("(max-width: 760px)").matches ? null : "catalogs";
 }
 
 export default function ExplorerShell() {
@@ -108,12 +112,12 @@ export default function ExplorerShell() {
     true,
     !prefersReducedMotion()
   );
-  const [leftRailCollapsed, setLeftRailCollapsed] = usePersistentState(LEFT_RAIL_KEY, false);
-  const [rightRailCollapsed, setRightRailCollapsed] = usePersistentState(RIGHT_RAIL_KEY, false);
-  const [collapsedPanels, setCollapsedPanels] = usePersistentState<Record<CollapsiblePanelId, boolean>>(
-    PANELS_KEY,
-    DEFAULT_COLLAPSED_PANELS
+  const [activeDrawer, setActiveDrawer] = usePersistentState<DrawerId | null>(
+    DRAWER_KEY,
+    "catalogs",
+    initialDrawer()
   );
+  const [rightRailCollapsed, setRightRailCollapsed] = usePersistentState(RIGHT_RAIL_KEY, false);
   const [analysisTab, setAnalysisTab] = useState<AnalysisTab>("rendezvous");
   const [primaryQuery, setPrimaryQuery] = useState("");
   const [rendezvousWindowHours, setRendezvousWindowHours] = useState(24);
@@ -286,6 +290,21 @@ export default function ExplorerShell() {
     return rows;
   }, [altitudeMax, altitudeMin, classFilter, debrisGroupIds, query, showDebris, loadedObjects]);
 
+  // Search is independent of the class/altitude filters so a hidden object can
+  // still be found and selected.
+  const searchResults = useMemo(() => {
+    const needle = normalizeText(query);
+    if (!needle) return [];
+    const rows: PropagatedObject[] = [];
+    for (const object of loadedObjects) {
+      const haystack = `${object.name} ${object.noradId} ${object.objectId ?? ""}`.toLowerCase();
+      if (!haystack.includes(needle)) continue;
+      rows.push(object);
+      if (rows.length >= 40) break;
+    }
+    return rows;
+  }, [loadedObjects, query]);
+
   const selectedRecord = useMemo(
     () => (selectedId ? recordByNorad.get(selectedId) ?? null : null),
     [recordByNorad, selectedId]
@@ -328,7 +347,7 @@ export default function ExplorerShell() {
     return sampleOrbitTrack(selectedRecord.record, new Date(trackAnchorMs), selectedRecord.groupId);
   }, [selectedRecord, trackAnchorMs]);
 
-  const passesVisible = !rightRailCollapsed && !collapsedPanels.analysis && analysisTab === "passes";
+  const passesVisible = activeDrawer === "analysis" && analysisTab === "passes";
   const passes = useMemo(() => {
     // A 48 h sweep is only useful while its results are visible. In particular,
     // accelerated playback crosses the scene-time minute grid every real tick.
@@ -492,6 +511,15 @@ export default function ExplorerShell() {
   // failed, show the reason and a retry action over the scene itself.
   const dataError = catalogError ?? Object.values(loadErrors)[0] ?? null;
   const showDataError = indexedRecords.length === 0 && Boolean(dataError);
+  const loadedGroupCount = displayCatalogs.filter((catalog) => loadedGroups[catalog.id]).length;
+  const busyGroupCount = displayCatalogs.filter((catalog) => loadingGroups[catalog.id]).length;
+  // A cold start has an empty globe for a few seconds while catalogs download
+  // and propagate; say so instead of showing an unexplained empty scene.
+  const showInitialLoading =
+    !showDataError && propagated.length === 0 && busyGroupCount > 0;
+  // Genuinely empty (everything unloaded): point at the catalogs drawer.
+  const showEmptyState =
+    !showDataError && !showInitialLoading && loadedObjects.length === 0 && busyGroupCount === 0;
 
   // -- keyboard shortcuts --
   // Registered once: the handler reads the current catalog list and toggle
@@ -555,18 +583,30 @@ export default function ExplorerShell() {
     return () => window.removeEventListener("keydown", handler);
   }, [setAutoRotate, setLocale]);
 
-  const togglePanel = (panelId: CollapsiblePanelId) => {
-    setCollapsedPanels((current) => ({
-      ...current,
-      [panelId]: !current[panelId]
-    }));
+  const selectDrawer = (drawer: DrawerId) =>
+    setActiveDrawer((current) => (current === drawer ? null : drawer));
+  const closeDrawer = () => setActiveDrawer(null);
+  const resetLayout = () => {
+    setActiveDrawer("catalogs");
+    setRightRailCollapsed(false);
+    setAutoRotate(true);
+  };
+
+  const drawerTitles: Record<DrawerId, string> = {
+    catalogs: t.catalogs,
+    search: t.search,
+    filters: t.filter,
+    analysis: t.analysis,
+    watchlist: t.watchlist,
+    status: t.sourceStatus,
+    tools: t.tools
   };
 
   return (
     <main
       className={clsx(
         "app-shell",
-        leftRailCollapsed && "left-rail-collapsed",
+        activeDrawer && "drawer-open",
         rightRailCollapsed && "right-rail-collapsed"
       )}
       style={{ position: "relative" }}
@@ -575,50 +615,51 @@ export default function ExplorerShell() {
         <ShortcutsOverlay t={t} onClose={() => setShowShortcuts(false)} />
       ) : null}
 
-      <aside className={clsx("sidebar", leftRailCollapsed && "side-collapsed")}>
-        <div className="brand-row">
-          <div className="brand-mark" title={t.appName}>
-            <Satellite size={22} />
-          </div>
-          {!leftRailCollapsed ? (
-            <div className="brand-copy">
-              <h1>{t.appName}</h1>
-              <p>
-                {t.subtitle}
-                {IS_SNAPSHOT_MODE ? ` · ${t.dataSnapshot}` : ""}
-              </p>
-            </div>
-          ) : null}
-          <button
-            className="icon-button compact side-toggle"
-            type="button"
-            aria-expanded={!leftRailCollapsed}
-            aria-label={leftRailCollapsed ? t.expandLeftRail : t.collapseLeftRail}
-            title={leftRailCollapsed ? t.expandLeftRail : t.collapseLeftRail}
-            onClick={() => setLeftRailCollapsed((value) => !value)}
-          >
-            {leftRailCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
-          </button>
-        </div>
+      <ExplorerRail
+        t={t}
+        active={activeDrawer}
+        watchlistCount={watchlist.length}
+        sourceAlert={Boolean(catalogError) || Object.keys(loadErrors).length > 0}
+        onSelect={selectDrawer}
+      />
 
-        {!leftRailCollapsed ? (
-          <>
-            <div className="search-box">
-              <Search size={17} />
-              <input
-                type="search"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={t.searchPlaceholder}
-                aria-label={t.searchPlaceholder}
-              />
-            </div>
-
+      {activeDrawer ? (
+        <ExplorerDrawer
+          title={drawerTitles[activeDrawer]}
+          closeLabel={t.closeDrawer}
+          onClose={closeDrawer}
+          actions={
+            activeDrawer === "catalogs" ? (
+              <>
+                <button
+                  className="mini-button"
+                  type="button"
+                  onClick={loadAllGroups}
+                  disabled={busyGroupCount > 0 || loadedGroupCount === displayCatalogs.length}
+                  title={t.loadAll}
+                >
+                  {t.loadAll}
+                </button>
+                <button
+                  className="mini-button"
+                  type="button"
+                  onClick={unloadAllGroups}
+                  disabled={loadedGroupCount === 0 && busyGroupCount === 0}
+                  title={t.unloadAll}
+                >
+                  {t.unloadAll}
+                </button>
+              </>
+            ) : undefined
+          }
+        >
+          {activeDrawer === "catalogs" ? (
             <CatalogPanel
               t={t}
               locale={locale}
-              collapsed={collapsedPanels.catalogs}
-              onToggle={togglePanel}
+              bare
+              collapsed={false}
+              onToggle={() => {}}
               catalogs={displayCatalogs}
               loadedGroups={loadedGroups}
               loadingGroups={loadingGroups}
@@ -629,106 +670,23 @@ export default function ExplorerShell() {
               onLoadAll={loadAllGroups}
               onUnloadAll={unloadAllGroups}
             />
-          </>
-        ) : null}
-      </aside>
+          ) : null}
 
-      <section className="stage">
-        <ExplorerTopBar
-          t={t}
-          indexedCount={indexedRecords.length}
-          visibleCount={propagated.length}
-          sceneTime={sceneTime}
-          autoRotate={autoRotate}
-          onToggleAutoRotate={() => setAutoRotate((value) => !value)}
-          onToggleLocale={() => setLocale(locale === "zh" ? "en" : "zh")}
-          onRefresh={() => void refreshLoaded()}
-          onScreenshot={handleScreenshot}
-          onToggleShortcuts={() => setShowShortcuts((v) => !v)}
-        />
+          {activeDrawer === "search" ? (
+            <ExplorerSearch
+              t={t}
+              query={query}
+              onQueryChange={setQuery}
+              results={searchResults}
+              onSelect={setSelectedId}
+            />
+          ) : null}
 
-        <GlobeScene
-          ref={globeRef}
-          objects={propagated}
-          selectedId={selectedId}
-          track={selectedTrack}
-          onSelect={setSelectedId}
-          observer={{ latitudeDeg: observerLat, longitudeDeg: observerLon }}
-          sceneTime={sceneTime}
-          autoRotate={autoRotate}
-          popupLabels={{
-            classification: t.classification,
-            altitude: t.altitudeKm,
-            speed: t.velocity,
-            period: t.orbitPeriod
-          }}
-          classLabel={(type) => t[type]}
-        />
-
-        {showDataError ? (
-          <div className="data-alert" role="alert">
-            <span>
-              {t.fetchError}: {localizeCatalogError(t, dataError)}
-            </span>
-            <button className="text-button" type="button" onClick={retryAllGroups}>
-              {t.retry}
-            </button>
-          </div>
-        ) : null}
-
-        {propagationError ? (
-          <div
-            className="panel"
-            role="alert"
-            style={{ position: "absolute", top: 78, left: 16, right: 16, zIndex: 5 }}
-          >
-            <p className="error-text">
-              {t.propagationFailed}: {propagationError}
-            </p>
-            <button className="text-button" type="button" onClick={retryPropagation}>
-              {t.retry}
-            </button>
-          </div>
-        ) : null}
-
-        <ExplorerLegend t={t} />
-
-        <TimeTimeline
-          t={t}
-          isPlaying={isPlaying}
-          isLive={isLive}
-          timeOffsetHours={timeOffsetHours}
-          speedIndex={speedIndex}
-          onTogglePlay={() => setIsPlaying((value) => !value)}
-          onScrub={(hours) => {
-            setIsPlaying(false);
-            setSceneTime(new Date(Date.now() + hours * 3_600_000));
-          }}
-          onGoLive={goLive}
-          onSpeedChange={setSpeedIndex}
-        />
-      </section>
-
-      <aside className={clsx("inspector", rightRailCollapsed && "side-collapsed")}>
-        <div className="inspector-rail-row">
-          <button
-            className="icon-button compact side-toggle"
-            type="button"
-            aria-expanded={!rightRailCollapsed}
-            aria-label={rightRailCollapsed ? t.expandRightRail : t.collapseRightRail}
-            title={rightRailCollapsed ? t.expandRightRail : t.collapseRightRail}
-            onClick={() => setRightRailCollapsed((value) => !value)}
-          >
-            {rightRailCollapsed ? <PanelRightOpen size={17} /> : <PanelRightClose size={17} />}
-          </button>
-        </div>
-
-        {!rightRailCollapsed ? (
-          <>
+          {activeDrawer === "filters" ? (
             <FilterPanel
               t={t}
-              collapsed={collapsedPanels.filters}
-              onToggle={togglePanel}
+              collapsed={false}
+              onToggle={() => {}}
               classFilter={classFilter}
               onClassFilterChange={setClassFilter}
               showDebris={showDebris}
@@ -738,11 +696,13 @@ export default function ExplorerShell() {
               onAltitudeMinChange={updateAltitudeMin}
               onAltitudeMaxChange={updateAltitudeMax}
             />
+          ) : null}
 
+          {activeDrawer === "analysis" ? (
             <AnalysisPanel
               t={t}
-              collapsed={collapsedPanels.analysis}
-              onToggle={togglePanel}
+              collapsed={false}
+              onToggle={() => {}}
               analysisTab={analysisTab}
               onAnalysisTabChange={setAnalysisTab}
               selectedObject={selectedObject}
@@ -775,40 +735,171 @@ export default function ExplorerShell() {
               onRequestLocation={requestLocation}
               passes={passes}
             />
+          ) : null}
 
-            <SelectedPanel
-              t={t}
-              collapsed={collapsedPanels.selected}
-              onToggle={togglePanel}
-              selectedObject={selectedObject}
-              sceneTime={sceneTime}
-              watchlist={watchlist}
-              propagatedCount={propagated.length}
-              onToggleWatchlist={toggleWatchlist}
-              onExportOmm={exportSelectedOmm}
-            />
-
+          {activeDrawer === "watchlist" ? (
             <WatchlistPanel
               t={t}
-              collapsed={collapsedPanels.watchlist}
-              onToggle={togglePanel}
+              collapsed={false}
+              onToggle={() => {}}
               watchlist={watchlist}
               watchlistObjects={watchlistObjects}
               selectedId={selectedId}
               onSelect={setSelectedId}
               onToggleWatchlist={toggleWatchlist}
             />
+          ) : null}
 
+          {activeDrawer === "status" ? (
             <StatusPanel
               t={t}
               locale={locale}
-              collapsed={collapsedPanels.status}
-              onToggle={togglePanel}
+              collapsed={false}
+              onToggle={() => {}}
               loadedGroups={loadedGroups}
               loadErrors={loadErrors}
               dataNowMs={dataNowMs}
             />
-          </>
+          ) : null}
+
+          {activeDrawer === "tools" ? (
+            <ExplorerTools
+              t={t}
+              locale={locale}
+              autoRotate={autoRotate}
+              onRefresh={() => void refreshLoaded()}
+              onScreenshot={handleScreenshot}
+              onOpenShortcuts={() => setShowShortcuts(true)}
+              onToggleAutoRotate={() => setAutoRotate((value) => !value)}
+              onToggleLocale={() => setLocale(locale === "zh" ? "en" : "zh")}
+              onResetLayout={resetLayout}
+            />
+          ) : null}
+        </ExplorerDrawer>
+      ) : null}
+
+      <section className="stage">
+        <ExplorerTopBar
+          t={t}
+          indexedCount={indexedRecords.length}
+          visibleCount={propagated.length}
+          sceneTime={sceneTime}
+          busy={busyGroupCount > 0}
+          autoRotate={autoRotate}
+          onToggleAutoRotate={() => setAutoRotate((value) => !value)}
+          onToggleLocale={() => setLocale(locale === "zh" ? "en" : "zh")}
+          onRefresh={() => void refreshLoaded()}
+          onResetView={() => globeRef.current?.home()}
+        />
+
+        <GlobeScene
+          ref={globeRef}
+          objects={propagated}
+          selectedId={selectedId}
+          track={selectedTrack}
+          onSelect={setSelectedId}
+          observer={{ latitudeDeg: observerLat, longitudeDeg: observerLon }}
+          sceneTime={sceneTime}
+          autoRotate={autoRotate}
+          popupLabels={{
+            classification: t.classification,
+            altitude: t.altitudeKm,
+            speed: t.velocity,
+            period: t.orbitPeriod
+          }}
+          followLabels={{ following: t.following, exit: t.exitFollow }}
+          classLabel={(type) => t[type]}
+        />
+
+        {showDataError ? (
+          <div className="data-alert" role="alert">
+            <span>
+              {t.fetchError}: {localizeCatalogError(t, dataError)}
+            </span>
+            <button className="text-button" type="button" onClick={retryAllGroups}>
+              {t.retry}
+            </button>
+          </div>
+        ) : null}
+
+        {propagationError ? (
+          <div
+            className="panel"
+            role="alert"
+            style={{ position: "absolute", top: 78, left: 16, right: 16, zIndex: 5 }}
+          >
+            <p className="error-text">
+              {t.propagationFailed}: {propagationError}
+            </p>
+            <button className="text-button" type="button" onClick={retryPropagation}>
+              {t.retry}
+            </button>
+          </div>
+        ) : null}
+
+        <ExplorerLegend t={t} />
+
+        {showInitialLoading ? (
+          <div className="stage-loading" role="status" aria-live="polite">
+            <span className="stage-spinner" aria-hidden />
+            <span>{t.loadingObjects}</span>
+          </div>
+        ) : null}
+
+        {showEmptyState ? (
+          <div className="stage-empty">
+            <p>{t.emptyCatalogHint}</p>
+            <button className="text-button" type="button" onClick={() => setActiveDrawer("catalogs")}>
+              {t.openCatalogs}
+            </button>
+          </div>
+        ) : null}
+
+        <p className="stage-hint">{t.hoverHint}</p>
+
+        <TimeTimeline
+          t={t}
+          isPlaying={isPlaying}
+          isLive={isLive}
+          timeOffsetHours={timeOffsetHours}
+          speedIndex={speedIndex}
+          onTogglePlay={() => setIsPlaying((value) => !value)}
+          onScrub={(hours) => {
+            setIsPlaying(false);
+            setSceneTime(new Date(Date.now() + hours * 3_600_000));
+          }}
+          onGoLive={goLive}
+          onSpeedChange={setSpeedIndex}
+        />
+      </section>
+
+      <aside className={clsx("inspector", rightRailCollapsed && "side-collapsed")}>
+        <div className="inspector-rail-row">
+          <button
+            className="icon-button compact side-toggle"
+            type="button"
+            aria-expanded={!rightRailCollapsed}
+            aria-label={rightRailCollapsed ? t.expandRightRail : t.collapseRightRail}
+            title={rightRailCollapsed ? t.expandRightRail : t.collapseRightRail}
+            onClick={() => setRightRailCollapsed((value) => !value)}
+          >
+            {rightRailCollapsed ? <PanelRightOpen size={17} /> : <PanelRightClose size={17} />}
+          </button>
+        </div>
+
+        {!rightRailCollapsed ? (
+          <SelectedPanel
+            t={t}
+            collapsed={false}
+            onToggle={() => {}}
+            selectedObject={selectedObject}
+            sceneTime={sceneTime}
+            watchlist={watchlist}
+            propagatedCount={propagated.length}
+            onToggleWatchlist={toggleWatchlist}
+            onExportOmm={exportSelectedOmm}
+            onFocusSelected={(id) => globeRef.current?.focus(id)}
+          />
         ) : null}
       </aside>
     </main>

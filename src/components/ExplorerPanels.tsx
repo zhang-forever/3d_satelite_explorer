@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment } from "react";
+import type { CSSProperties } from "react";
 import clsx from "clsx";
 import {
   AlertTriangle,
@@ -35,6 +36,8 @@ type CatalogPanelProps = {
   onToggleGroup: (groupId: string) => void;
   onLoadAll: () => void;
   onUnloadAll: () => void;
+  /** Render only the list, without the panel header. Used inside a drawer page. */
+  bare?: boolean;
 };
 
 export function CatalogPanel({
@@ -50,10 +53,86 @@ export function CatalogPanel({
   dataNowMs,
   onToggleGroup,
   onLoadAll,
-  onUnloadAll
+  onUnloadAll,
+  bare = false
 }: CatalogPanelProps) {
   const loadedGroupCount = catalogs.filter((catalog) => loadedGroups[catalog.id]).length;
   const busyGroupCount = catalogs.filter((catalog) => loadingGroups[catalog.id]).length;
+
+  const content = (
+    <>
+      {IS_SNAPSHOT_MODE ? <p className="empty-state">{t.snapshotHint}</p> : null}
+      {catalogError ? (
+        <p className="error-text" role="alert">
+          {t.fetchError}: <span title={catalogError}>{localizeCatalogError(t, catalogError)}</span>
+        </p>
+      ) : null}
+      {Object.entries(loadErrors).map(([groupId, error]) => (
+        <p key={groupId} className="error-text" role="alert">
+          {AVAILABLE_CATALOGS.find((catalog) => catalog.id === groupId)?.label[locale]}:{" "}
+          <span title={error}>{localizeCatalogError(t, error)}</span>
+        </p>
+      ))}
+      {busyGroupCount > 0 ? (
+        <div className="load-progress" role="status" aria-live="polite">
+          <span
+            className="load-progress-bar"
+            style={{ width: `${(loadedGroupCount / catalogs.length) * 100}%` }}
+          />
+          <small>{t.loading}</small>
+        </div>
+      ) : null}
+      {!collapsed ? (
+        <div className="catalog-list">
+          {catalogs.map((catalog) => {
+            const loaded = loadedGroups[catalog.id];
+            const loading = loadingGroups[catalog.id];
+            const error = loadErrors[catalog.id] ?? loaded?.error;
+            const fetchedAt = loaded?.fetchedAt ?? catalog.fetchedAt;
+            return (
+              <button
+                key={catalog.id}
+                className={clsx("catalog-item", loaded && "active", loading && "pending")}
+                onClick={() => onToggleGroup(catalog.id)}
+                type="button"
+                disabled={loading}
+                title={loaded ? t.unload : t.load}
+                aria-pressed={Boolean(loaded)}
+                style={{ "--group-color": catalog.color } as CSSProperties}
+              >
+                <span>
+                  <span className="catalog-label">
+                    <strong>{catalog.label[locale]}</strong>
+                  </span>
+                  <small>{catalog.description[locale]}</small>
+                  {IS_SNAPSHOT_MODE && fetchedAt ? (
+                    <small>
+                      {t.dataFetchedAt}:{" "}
+                      <time dateTime={fetchedAt}>{formatDateTimeShort(fetchedAt)}</time>
+                    </small>
+                  ) : null}
+                </span>
+                <span className="catalog-meta" aria-busy={Boolean(loading)}>
+                  <span className="catalog-state">
+                    {loading ? <Loader2 className="spin" size={13} /> : loaded ? t.loaded : t.load}
+                    {error ? <AlertTriangle size={13} /> : null}
+                  </span>
+                  <small>
+                    {loaded?.records.length ?? catalog.cachedCount ?? 0} {t.objects}
+                  </small>
+                  {IS_SNAPSHOT_MODE && fetchedAt && snapshotIsStale(loaded ?? catalog, dataNowMs) ? (
+                    <small>{t.snapshotStale}</small>
+                  ) : null}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </>
+  );
+
+  if (bare) return content;
 
   return (
     <PanelSection
@@ -95,79 +174,11 @@ export function CatalogPanel({
         </>
       }
     >
-      {IS_SNAPSHOT_MODE ? <p className="empty-state">{t.snapshotHint}</p> : null}
-      {catalogError ? (
-        <p className="error-text" role="alert">
-          {t.fetchError}: <span title={catalogError}>{localizeCatalogError(t, catalogError)}</span>
-        </p>
-      ) : null}
-      {Object.entries(loadErrors).map(([groupId, error]) => (
-        <p key={groupId} className="error-text" role="alert">
-          {AVAILABLE_CATALOGS.find((catalog) => catalog.id === groupId)?.label[locale]}:{" "}
-          <span title={error}>{localizeCatalogError(t, error)}</span>
-        </p>
-      ))}
-      {busyGroupCount > 0 ? (
-        <div className="load-progress" role="status" aria-live="polite">
-          <span
-            className="load-progress-bar"
-            style={{ width: `${(loadedGroupCount / catalogs.length) * 100}%` }}
-          />
-          <small>{t.loading}</small>
-        </div>
-      ) : null}
-      {!collapsed ? (
-        <div className="catalog-list">
-          {catalogs.map((catalog) => {
-            const loaded = loadedGroups[catalog.id];
-            const loading = loadingGroups[catalog.id];
-            const error = loadErrors[catalog.id] ?? loaded?.error;
-            const fetchedAt = loaded?.fetchedAt ?? catalog.fetchedAt;
-            return (
-              <button
-                key={catalog.id}
-                className={clsx("catalog-item", loaded && "active", loading && "pending")}
-                onClick={() => onToggleGroup(catalog.id)}
-                type="button"
-                disabled={loading}
-                title={loaded ? t.unload : t.load}
-                aria-pressed={Boolean(loaded)}
-              >
-                <span>
-                  <span className="catalog-label">
-                    <span
-                      className="catalog-swatch"
-                      style={{ backgroundColor: catalog.color }}
-                      aria-hidden
-                    />
-                    <strong>{catalog.label[locale]}</strong>
-                  </span>
-                  <small>{catalog.description[locale]}</small>
-                  {IS_SNAPSHOT_MODE && fetchedAt ? (
-                    <small>
-                      {t.dataFetchedAt}:{" "}
-                      <time dateTime={fetchedAt}>{formatDateTimeShort(fetchedAt)}</time>
-                    </small>
-                  ) : null}
-                </span>
-                <span className="catalog-meta" aria-busy={Boolean(loading)}>
-                  {loading ? <Loader2 className="spin" size={15} /> : loaded ? t.loaded : t.load}
-                  <small>
-                    {loaded?.records.length ?? catalog.cachedCount ?? 0} {t.objects}
-                  </small>
-                  {IS_SNAPSHOT_MODE && fetchedAt && snapshotIsStale(loaded ?? catalog, dataNowMs) ? (
-                    <small>{t.snapshotStale}</small>
-                  ) : null}
-                  {error ? <AlertTriangle size={14} /> : null}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+      {content}
     </PanelSection>
   );
 }
+
 
 export type ClassFilter = "all" | "payload" | "debris" | "rocket" | "unknown";
 
@@ -324,6 +335,12 @@ export function StatusPanel({
                     )}
                   </strong>
                 </div>
+                {IS_SNAPSHOT_MODE && group.fetchedAt ? (
+                  <div className="status-row">
+                    <span>{t.dataFetchedAt}</span>
+                    <time dateTime={group.fetchedAt}>{formatDateTimeShort(group.fetchedAt)}</time>
+                  </div>
+                ) : null}
                 {IS_SNAPSHOT_MODE && group.sourceUpdatedAt ? (
                   <div className="status-row">
                     <span>{t.latestEpoch}</span>
