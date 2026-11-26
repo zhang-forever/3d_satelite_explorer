@@ -166,15 +166,37 @@ export function useCatalogLoader() {
   };
 
   useEffect(() => {
+    // 先发出默认分组的请求，保证画面在 ~800ms 内出现卫星，不会空窗。
     const defaults = AVAILABLE_CATALOGS.filter((item) => item.defaultSelected);
     for (const catalog of defaults.length ? defaults : AVAILABLE_CATALOGS.slice(0, 1)) {
       void loadGroup(catalog.id);
     }
+
+    // 默认全选：在主线程空闲时再把剩余分组拉上。已经在请求中或已加载的
+    // 分组会被 loadGroup 内部短路跳过，不会重复发起。分批发出既避免首屏
+    // 空窗期，也不让上游 CelesTrak 被瞬时 18 路并发直接打挂。
+    let cancelled = false;
+    const kick = () => {
+      if (cancelled) return;
+      for (const catalog of AVAILABLE_CATALOGS) {
+        if (groupRequestsRef.current.has(catalog.id)) continue;
+        if (loadedGroupsRef.current[catalog.id]) continue;
+        void loadGroup(catalog.id);
+      }
+    };
+    if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(kick, { timeout: 3000 });
+    } else {
+      window.setTimeout(kick, 500);
+    }
+
     // No abort on cleanup: StrictMode remounts this effect immediately and
     // cancelling the in-flight download only produced net::ERR_ABORTED. Late
     // replies are still discarded by `isCurrentRequest`, and the timeout in
     // `loadGroup` aborts a stalled request.
-    // Load the default catalogs exactly once; loadGroup closes over refs.
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const refreshLoaded = async () => {
