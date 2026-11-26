@@ -10,6 +10,7 @@ import type { Copy } from "./i18n";
  */
 export function localizeCatalogError(t: Copy, message: string | null | undefined): string {
   if (!message) return "";
+  if (/bundled snapshot/i.test(message)) return t.errorSnapshot;
   if (/timed out|timeout/i.test(message)) return t.errorTimeout;
   if (/\b(403|404)\b/.test(message)) return t.errorRejected;
   if (/invalid OMM|not valid JSON|invalid catalog response|Invalid GP catalog response/i.test(message)) {

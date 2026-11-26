@@ -378,6 +378,29 @@ describe("CelesTrak cache", () => {
     expect(result.error).toContain("not valid JSON");
   });
 
+  it("falls back to the bundled snapshot when upstream cannot be parsed", async () => {
+    const cacheDir = await tempCacheDir();
+    const snapshotDir = await tempCacheDir();
+    await writeFile(join(snapshotDir, `${CATALOGS[1].id}.json`), JSON.stringify({
+      records: sample,
+      fetchedAt: "2026-04-27T00:00:00.000Z",
+      sourceUpdatedAt: "2026-04-28T04:47:58.358Z"
+    }));
+    vi.stubEnv("CELESTRAK_SNAPSHOT_DIR", snapshotDir);
+    const fetchImpl = vi.fn(async () => new Response("<html>blocked</html>"));
+    const now = new Date("2026-04-28T06:00:00.000Z");
+
+    const result = await getGpGroup(CATALOGS[1], { cacheDir, fetchImpl, now, allowFallback: true });
+
+    expect(result.records).toEqual(sample);
+    expect(result.fetchedAt).toBe("2026-04-27T00:00:00.000Z");
+    expect(result.stale).toBe(true);
+    expect(result.error).toContain("bundled snapshot");
+    const stored = await storedGroup(cacheDir);
+    expect(stored.records).toEqual(sample);
+    expect(stored.nextRetryAt).toBe("2026-04-28T08:00:00.000Z");
+  });
+
   it("accepts a validated empty group and serves it from cache", async () => {
     const cacheDir = await tempCacheDir();
     const fetchImpl = vi.fn(async () => new Response("[]"));

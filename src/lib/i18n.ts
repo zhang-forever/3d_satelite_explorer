@@ -149,7 +149,8 @@ export const copy = {
     errorTimeout: "CelesTrak 请求超时",
     errorRejected: "CelesTrak 拒绝访问，已暂停自动下载",
     errorInvalidData: "返回的数据格式无效",
-    errorCache: "本地缓存不可用"
+    errorCache: "本地缓存不可用",
+    errorSnapshot: "已改用内置数据快照（外部数据源不可用）"
   },
   en: {
     appName: "Orbital Field",
@@ -289,6 +290,7 @@ export const copy = {
     errorRejected: "CelesTrak rejected the request; automatic downloads paused",
     errorInvalidData: "Received data was invalid",
     errorCache: "Local cache unavailable",
+    errorSnapshot: "Using the bundled data snapshot (live source unavailable)",
     loadingObjects: "Fetching and propagating orbits…",
     hoverHint: "Hover to identify · click to follow · drag to orbit · scroll to zoom",
     focusOnGlobe: "Locate on globe",

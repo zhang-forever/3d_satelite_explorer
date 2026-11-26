@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { CATALOGS, type CatalogDefinition } from "@/lib/catalogs";
 import { parseOmmEpoch, type OmmRecord } from "@/lib/orbit";
@@ -35,6 +36,11 @@ type GetGpOptions = {
   timeoutMs?: number;
   /** Bypass the failure cooldown for an explicit user-initiated retry. */
   force?: boolean;
+  /**
+   * Allow the temp-directory cache and the bundled snapshot as fallbacks.
+   * Defaults to true only when no explicit cache dir is injected.
+   */
+  allowFallback?: boolean;
 };
 
 export const GP_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
@@ -51,6 +57,25 @@ export function getCacheDirectory() {
 
 export function cacheFileFor(groupId: string, cacheDir = getCacheDirectory()) {
   return path.resolve(cacheDir, `${groupId}.json`);
+}
+
+/**
+ * Hosts that mount the app directory read-only cannot persist next to the
+ * source, but the OS temp directory stays writable for the process lifetime.
+ */
+function fallbackCacheFileFor(groupId: string) {
+  return path.resolve(path.join(tmpdir(), "3d-satellite-explorer", "celestrak"), `${groupId}.json`);
+}
+
+/**
+ * Groups published with a bundled snapshot under `public/data/gp` stay usable
+ * when the live endpoint is blocked, rate limited, or unreachable from the
+ * hosting network.
+ */
+function bundledSnapshotFile(groupId: string) {
+  const dir = process.env.CELESTRAK_SNAPSHOT_DIR?.trim() ||
+    path.join(process.cwd(), "public", "data", "gp");
+  return path.resolve(dir, `${groupId}.json`);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -141,18 +166,37 @@ function storedVersion(payload: StoredPayload) {
   return Date.parse(payload.lastAttemptAt ?? payload.fetchedAt ?? "") || 0;
 }
 
-export async function readCachedGp(group: CatalogDefinition, cacheDir = getCacheDirectory()) {
+async function readStoredFile(file: string, groupId: string) {
+  const raw = await readFile(file, "utf8");
+  const parsed = parseStoredPayload(JSON.parse(raw), groupId);
+  if (!parsed) throw new Error("Invalid cached payload");
+  return parsed;
+}
+
+export async function readCachedGp(
+  group: CatalogDefinition,
+  cacheDir = getCacheDirectory(),
+  allowFallback = false
+) {
   const key = cacheFileFor(group.id, cacheDir);
   const memory = memoryCache.get(key);
   try {
-    const raw = await readFile(key, "utf8");
-    const parsed = parseStoredPayload(JSON.parse(raw), group.id);
-    if (!parsed) throw new Error("Invalid cached payload");
+    const parsed = await readStoredFile(key, group.id);
     cacheReadErrors.delete(key);
     const cached = memory && storedVersion(memory) >= storedVersion(parsed) ? memory : parsed;
     memoryCache.set(key, cached);
     return cached;
   } catch (error) {
+    if (allowFallback && errorCode(error) === "ENOENT") {
+      try {
+        const fallback = await readStoredFile(fallbackCacheFileFor(group.id), group.id);
+        const cached = memory && storedVersion(memory) >= storedVersion(fallback) ? memory : fallback;
+        memoryCache.set(key, cached);
+        return cached;
+      } catch {
+        // No persisted copy either: fall through to the in-memory cache.
+      }
+    }
     if (errorCode(error) !== "ENOENT") {
       const message = "Stored CelesTrak cache could not be read or validated";
       if (!cacheReadErrors.has(key)) {
@@ -164,8 +208,7 @@ export async function readCachedGp(group: CatalogDefinition, cacheDir = getCache
   }
 }
 
-async function writeCachedGp(group: CatalogDefinition, payload: StoredPayload, cacheDir: string) {
-  const destination = cacheFileFor(group.id, cacheDir);
+async function writePayloadFile(destination: string, payload: StoredPayload, groupId: string) {
   const temporary = `${destination}.${randomUUID()}.tmp`;
   await mkdir(path.dirname(destination), { recursive: true });
   try {
@@ -174,17 +217,38 @@ async function writeCachedGp(group: CatalogDefinition, payload: StoredPayload, c
   } finally {
     await unlink(temporary).catch((error: unknown) => {
       if (errorCode(error) !== "ENOENT") {
-        console.warn("[CelesTrak] Cache cleanup failed", { group: group.id, code: errorCode(error) });
+        console.warn("[CelesTrak] Cache cleanup failed", { group: groupId, code: errorCode(error) });
       }
     });
   }
 }
 
-async function storePayload(group: CatalogDefinition, payload: StoredPayload, cacheDir: string) {
+async function writeCachedGp(
+  group: CatalogDefinition,
+  payload: StoredPayload,
+  cacheDir: string,
+  allowFallback = false
+) {
+  try {
+    await writePayloadFile(cacheFileFor(group.id, cacheDir), payload, group.id);
+  } catch (error) {
+    if (!allowFallback) throw error;
+    // The app directory is read-only on the hosting platform: persist in the
+    // OS temp directory instead of losing the refresh result.
+    await writePayloadFile(fallbackCacheFileFor(group.id), payload, group.id);
+  }
+}
+
+async function storePayload(
+  group: CatalogDefinition,
+  payload: StoredPayload,
+  cacheDir: string,
+  allowFallback = false
+) {
   const key = cacheFileFor(group.id, cacheDir);
   memoryCache.set(key, payload);
   try {
-    await writeCachedGp(group, payload, cacheDir);
+    await writeCachedGp(group, payload, cacheDir, allowFallback);
     cacheReadErrors.delete(key);
     return payload;
   } catch (error) {
@@ -261,7 +325,8 @@ async function loadGpGroup(group: CatalogDefinition, options: GetGpOptions, cach
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? new Date();
   const maxAgeMs = options.maxAgeMs ?? GP_REFRESH_INTERVAL_MS;
-  const cached = await readCachedGp(group, cacheDir);
+  const allowFallback = options.allowFallback ?? options.cacheDir === undefined;
+  const cached = await readCachedGp(group, cacheDir, allowFallback);
 
   // Permanent rejections always win; a transient cooldown is skipped only when
   // the user explicitly retries, otherwise a single 503 blocks retries for 2 h.
@@ -290,7 +355,7 @@ async function loadGpGroup(group: CatalogDefinition, options: GetGpOptions, cach
         etag: response.headers.get("etag") ?? cached.etag,
         lastModified: response.headers.get("last-modified") ?? cached.lastModified,
         error: null, nextRetryAt: null, blockedStatus: null
-      }, cacheDir);
+      }, cacheDir, allowFallback);
       return toPublicPayload(group, refreshed, "updated", false);
     }
     if (!response.ok) {
@@ -312,7 +377,7 @@ async function loadGpGroup(group: CatalogDefinition, options: GetGpOptions, cach
       groupId: group.id, records, fetchedAt: now.toISOString(), sourceUpdatedAt: latestEpoch(records),
       etag: response.headers.get("etag"), lastModified: response.headers.get("last-modified"),
       error: null, lastAttemptAt: now.toISOString(), nextRetryAt: null, blockedStatus: null
-    }, cacheDir);
+    }, cacheDir, allowFallback);
     return toPublicPayload(group, stored, "updated", false);
   } catch (error) {
     const failure = error instanceof UpstreamError ? error : new UpstreamError(
@@ -322,12 +387,54 @@ async function loadGpGroup(group: CatalogDefinition, options: GetGpOptions, cach
     const blockedStatus = failure.status === 403 || failure.status === 404 ? failure.status : null;
     const cooldown = Math.max(FAILURE_COOLDOWN_MS, failure.retryAfterMs);
     console.warn("[CelesTrak] Refresh failed", { group: group.id, status: failure.status });
+
+    // Nothing usable was cached: fall back to the snapshot shipped with the
+    // app, so a blocked upstream still yields a working catalog.
+    const seeded = allowFallback && (!cached || cached.records.length === 0)
+      ? await readBundledSnapshot(group, now)
+      : null;
+    if (seeded) {
+      console.warn("[CelesTrak] Serving bundled snapshot", { group: group.id, fetchedAt: seeded.fetchedAt });
+      const stored = await storePayload(group, seeded, cacheDir, allowFallback);
+      return toPublicPayload(group, stored, "stale", true);
+    }
+
     const failed = await storePayload(group, {
       ...(cached ?? emptySnapshot(group.id)),
       error: failure.message, lastAttemptAt: now.toISOString(), blockedStatus,
       nextRetryAt: blockedStatus ? null : new Date(now.getTime() + cooldown).toISOString()
-    }, cacheDir);
+    }, cacheDir, allowFallback);
     return toPublicPayload(group, failed, failed.fetchedAt ? "stale" : "miss", true);
+  }
+}
+
+/**
+ * Load the group snapshot published under `public/data/gp`. Returns null when
+ * the group has no snapshot or the file is unusable.
+ */
+async function readBundledSnapshot(group: CatalogDefinition, now: Date): Promise<StoredPayload | null> {
+  try {
+    const raw = await readFile(bundledSnapshotFile(group.id), "utf8");
+    const parsed: unknown = JSON.parse(raw);
+    if (!isObject(parsed) || !isOmmArray(parsed.records) || parsed.records.length === 0) return null;
+    if (!isNullableDate(parsed.fetchedAt) || typeof parsed.fetchedAt !== "string") return null;
+    return {
+      groupId: group.id,
+      records: parsed.records,
+      fetchedAt: parsed.fetchedAt,
+      sourceUpdatedAt: typeof parsed.sourceUpdatedAt === "string"
+        ? parsed.sourceUpdatedAt
+        : latestEpoch(parsed.records),
+      etag: null,
+      lastModified: null,
+      error: `Using bundled snapshot from ${parsed.fetchedAt.slice(0, 10)}; live CelesTrak unavailable`,
+      lastAttemptAt: now.toISOString(),
+      // Hold off the next upstream attempt like any other transient failure.
+      nextRetryAt: new Date(now.getTime() + FAILURE_COOLDOWN_MS).toISOString(),
+      blockedStatus: null
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -346,16 +453,17 @@ export async function getGpGroup(group: CatalogDefinition, options: GetGpOptions
   }
 }
 
-export async function getCatalogSummaries(cacheDir = getCacheDirectory()) {
+export async function getCatalogSummaries(cacheDir?: string, allowFallback = cacheDir === undefined) {
+  const dir = cacheDir ?? getCacheDirectory();
   return Promise.all(CATALOGS.map(async (group) => {
-    const cached = await readCachedGp(group, cacheDir);
+    const cached = await readCachedGp(group, dir, allowFallback);
     return {
       ...group,
       cachedCount: cached?.records.length ?? 0,
       fetchedAt: cached?.fetchedAt ?? null,
       sourceUpdatedAt: cached?.sourceUpdatedAt ?? null,
       stale: !isFresh(cached?.fetchedAt ?? null, new Date(), GP_REFRESH_INTERVAL_MS),
-      error: cached?.error ?? cacheReadErrors.get(cacheFileFor(group.id, cacheDir)) ?? null,
+      error: cached?.error ?? cacheReadErrors.get(cacheFileFor(group.id, dir)) ?? null,
       lastAttemptAt: cached?.lastAttemptAt ?? null,
       nextRetryAt: cached?.nextRetryAt ?? null,
       blockedStatus: cached?.blockedStatus ?? null
