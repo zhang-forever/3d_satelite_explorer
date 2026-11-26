@@ -8,7 +8,7 @@ import { validateStaticOutput } from "./validate-static-output.mjs";
 
 const root = await realpath(fileURLToPath(new URL("../../../", import.meta.url)));
 const require = createRequire(import.meta.url);
-const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "/3d_satelite_explorer";
+const basePath = (process.env.NEXT_PUBLIC_BASE_PATH ?? "/3d_satelite_explorer").replace(/\/$/, "");
 if (basePath && (!/^\/[a-zA-Z0-9_/-]+$/.test(basePath) || basePath.includes("//") || basePath.endsWith("/"))) {
   throw new Error("Static base path must be empty or an absolute URL path without a trailing slash.");
 }
