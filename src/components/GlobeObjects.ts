@@ -276,9 +276,13 @@ export function orbitalPeriodMinutes(altitudeKm: number) {
 // shaded like everything else.
 
 /** Camera distance that frames each model nicely, in Earth radii. */
-export const MODEL_VIEW_DISTANCE: Record<ObjectClass, number> = {
+export const MODEL_VIEW_DISTANCE: Record<string, number> = {
   payload: 0.72,
-  debris: 0.4,
+  starlink: 0.6,
+  iss: 1.1,
+  debris1: 0.4,
+  debris2: 0.38,
+  debris3: 0.42,
   rocket: 0.68,
   unknown: 0.5
 };
@@ -288,10 +292,78 @@ export const MODEL_VIEW_DISTANCE: Record<ObjectClass, number> = {
  * Spent stages and debris tumble, and a rear-on view of an axis-aligned
  * cylinder would read as a plain circle, so both classes are tilted.
  */
-export const MODEL_ATTITUDE: Partial<Record<ObjectClass, [number, number, number]>> = {
+export const MODEL_ATTITUDE: Partial<Record<string, [number, number, number]>> = {
   rocket: [0.52, 0.16, 0.24],
-  debris: [0.85, 0.45, 0.2]
+  debris1: [0.85, 0.45, 0.2],
+  debris2: [0.62, 0.3, 0.15],
+  debris3: [0.9, 0.2, 0.7],
+  iss: [0, 0.12, 0]
 };
+
+// --- Model resolution keys -------------------------------------------------
+// ObjectClass is the coarse classification used for rendering groups, but the
+// chase camera needs finer-grained models for well-known constellations and
+// manned stations. Each resolved key maps to one build function below.
+
+export const MODEL_KEYS = {
+  genericPayload: "payload",
+  starlink: "starlink",
+  iss: "iss",
+  debris1: "debris1",
+  debris2: "debris2",
+  debris3: "debris3",
+  rocket: "rocket",
+  unknown: "unknown"
+} as const;
+
+export type ModelKey = (typeof MODEL_KEYS)[keyof typeof MODEL_KEYS];
+
+/**
+ * Choose the detailed chase-camera model for one propagated object.
+ * - Starlink: name contains "STARLINK" (NORAD range 43xxxx–49xxxx also common).
+ * - Manned stations: ISS (25544), Tianhe (48274), name includes ISS/TIANHE/天宫/神舟.
+ * - Debris: three distinct shard styles, picked deterministically from the id so
+ *   the same fragment always renders the same way.
+ * - Otherwise fall back to the object's coarse class.
+ */
+export function resolveModelKey(obj: PropagatedObject): ModelKey {
+  const name = obj.name.toUpperCase();
+  const norad = Number(obj.noradId);
+  if (obj.objectType === "payload") {
+    if (name.includes("STARLINK") || (norad >= 43000 && norad <= 49999)) {
+      return MODEL_KEYS.starlink;
+    }
+    if (
+      norad === 25544 || // ISS
+      norad === 48274 || // Tianhe
+      norad === 54216 || // Shenzhou 12
+      norad === 54565 || // Shenzhou 13
+      norad === 55318 || // Shenzhou 14
+      norad === 56176 || // Shenzhou 15
+      name.includes("ISS") ||
+      name.includes("TIANHE") ||
+      name.includes("神舟") ||
+      name.includes("天宫") ||
+      name.includes("ZARYA")
+    ) {
+      return MODEL_KEYS.iss;
+    }
+    return MODEL_KEYS.genericPayload;
+  }
+  if (obj.objectType === "debris") {
+    // Hash id to pick a debris style deterministically.
+    let hash = 0;
+    for (let i = 0; i < obj.id.length; i += 1) {
+      hash = (hash * 31 + obj.id.charCodeAt(i)) >>> 0;
+    }
+    const style = hash % 3;
+    if (style === 0) return MODEL_KEYS.debris1;
+    if (style === 1) return MODEL_KEYS.debris2;
+    return MODEL_KEYS.debris3;
+  }
+  if (obj.objectType === "rocket") return MODEL_KEYS.rocket;
+  return MODEL_KEYS.unknown;
+}
 
 /**
  * Solar-cell texture, built as a DataTexture so it needs no DOM canvas (the
@@ -736,72 +808,6 @@ function buildRocket() {
   return group;
 }
 
-/** Trackable debris: a torn panel shard, a broken rod and crumpled foil. */
-function buildDebris() {
-  const group = new THREE.Group();
-
-  const tornPanel = (radius: number, depth: number) => {
-    const shape = new THREE.Shape();
-    const points = 9;
-    for (let i = 0; i < points; i += 1) {
-      const angle = (i / points) * Math.PI * 2;
-      const r = radius * (0.68 + Math.random() * 0.5);
-      const x = Math.cos(angle) * r;
-      const y = Math.sin(angle) * r * 0.82;
-      if (i === 0) shape.moveTo(x, y);
-      else shape.lineTo(x, y);
-    }
-    shape.closePath();
-    const geometry = new THREE.ExtrudeGeometry(shape, {
-      depth,
-      bevelEnabled: false,
-      curveSegments: 1
-    });
-    geometry.center();
-    return geometry;
-  };
-
-  group.add(
-    part({
-      geo: tornPanel(0.022, 0.0016),
-      mat: MODEL_MATERIALS.debris,
-      rx: 0.55,
-      rz: 0.3
-    })
-  );
-  group.add(
-    part({
-      geo: tornPanel(0.016, 0.0012),
-      mat: MODEL_MATERIALS.panel,
-      x: 0.02,
-      y: -0.012,
-      z: 0.008,
-      rx: -0.5,
-      ry: 0.4,
-      rz: 0.9
-    })
-  );
-  group.add(
-    link(
-      new THREE.Vector3(-0.028, -0.01, 0.004),
-      new THREE.Vector3(0.026, 0.02, -0.012),
-      0.0014,
-      MODEL_MATERIALS.silver
-    )
-  );
-  group.add(
-    part({
-      geo: new THREE.DodecahedronGeometry(0.006, 0),
-      mat: MODEL_MATERIALS.gold,
-      x: -0.016,
-      y: 0.014,
-      z: -0.014,
-      rx: 0.8
-    })
-  );
-  return group;
-}
-
 /** Unclassified object: octagonal bus, small wing, beacon mast. */
 function buildUnknown() {
   const group = new THREE.Group();
@@ -832,16 +838,222 @@ function buildUnknown() {
   return group;
 }
 
-export function createSatelliteModels(): Record<ObjectClass, THREE.Group> {
+/** Starlink broadband satellite: white body, large solar wings, phased array. */
+function buildStarlink() {
+  const group = new THREE.Group();
+  // Body axis +Z is the direction of travel; the phased array points -Y (nadir).
+  group.add(
+    part({
+      geo: new RoundedBoxGeometry(0.018, 0.009, 0.022, 2, 0.0015),
+      mat: MODEL_MATERIALS.white
+    })
+  );
+  // Phased array antenna — black panel on the nadir face.
+  group.add(
+    part({
+      geo: new THREE.BoxGeometry(0.016, 0.0012, 0.018),
+      mat: MODEL_MATERIALS.dark,
+      y: -0.005
+    })
+  );
+  // Small zenith antenna (top).
+  group.add(part({ geo: new THREE.CylinderGeometry(0.001, 0.0014, 0.004, 6), mat: MODEL_MATERIALS.dark, y: 0.007 }));
+  group.add(part({ geo: new THREE.SphereGeometry(0.0012, 8, 6), mat: MODEL_MATERIALS.silver, y: 0.009 }));
+
+  // Deployed solar wings — two panels per side, spread to either side of the body.
+  for (const sign of [-1, 1]) {
+    // Hinge arm from the body wall to the panel root.
+    group.add(
+      part({
+        geo: new THREE.CylinderGeometry(0.0014, 0.0014, 0.007, 6),
+        mat: MODEL_MATERIALS.silver,
+        x: sign * (0.009 + 0.0035),
+        rz: Math.PI / 2
+      })
+    );
+    // Two panels per side, unfolded to +X.
+    for (let index = 0; index < 2; index += 1) {
+      group.add(
+        part({
+          geo: new THREE.BoxGeometry(0.026, 0.0014, 0.014),
+          mat: MODEL_MATERIALS.panel,
+          x: sign * (0.0125 + 0.013 + index * 0.026 + 0.013),
+          z: index === 0 ? 0 : 0.008
+        })
+      );
+      // Silver rail on the panel edge.
+      group.add(
+        part({
+          geo: new THREE.BoxGeometry(0.026, 0.0018, 0.0008),
+          mat: MODEL_MATERIALS.silver,
+          x: sign * (0.0125 + 0.013 + index * 0.026 + 0.013),
+          z: index === 0 ? -0.0074 : 0.0154
+        })
+      );
+    }
+  }
+  return group;
+}
+
+/**
+ * Manned station: truss core, cylindrical modules, and large solar wings.
+ * Scale is deliberately small (~10 m span → 0.008 Earth radii) so the station
+ * reads as a single object in the chase frame, not a city block.
+ */
+function buildISS() {
+  const group = new THREE.Group();
+  // Main truss (white): the backbone of the station, axis +X.
+  group.add(
+    part({
+      geo: new THREE.BoxGeometry(0.04, 0.004, 0.004),
+      mat: MODEL_MATERIALS.white,
+      x: -0.01
+    })
+  );
+  // Six cylindrical modules attached to the truss: different sizes for major nodes.
+  const modules = [
+    { r: 0.006, l: 0.012, x: -0.025, y: 0.003, z: 0, rx: Math.PI / 2, mat: MODEL_MATERIALS.white },
+    { r: 0.005, l: 0.009, x: -0.018, y: -0.003, z: 0, rx: Math.PI / 2, mat: MODEL_MATERIALS.silver },
+    { r: 0.007, l: 0.014, x: -0.008, y: 0.003, z: 0, rx: Math.PI / 2, mat: MODEL_MATERIALS.white },
+    { r: 0.004, l: 0.005, x: 0.002, y: -0.003, z: 0, rx: Math.PI / 2, mat: MODEL_MATERIALS.gold }
+  ];
+  for (const m of modules) {
+    group.add(
+      part({
+        geo: new THREE.CylinderGeometry(m.r, m.r, m.l, 12),
+        mat: m.mat,
+        x: m.x,
+        y: m.y,
+        z: m.z,
+        rx: m.rx
+      })
+    );
+  }
+  // Cupola: spherical observation module at the bottom.
+  group.add(part({ geo: new THREE.SphereGeometry(0.0045, 12, 10), mat: MODEL_MATERIALS.dark, x: -0.014, y: -0.007, z: 0 }));
+
+  // Solar trusses extending along +Y and -Y from the main truss.
+  for (const sign of [-1, 1]) {
+    group.add(
+      part({
+        geo: new THREE.BoxGeometry(0.004, 0.018, 0.003),
+        mat: MODEL_MATERIALS.white,
+        x: -0.01,
+        y: sign * 0.01
+      })
+    );
+    // Four solar panels per side, stacked along the truss.
+    for (let i = 0; i < 4; i += 1) {
+      group.add(
+        part({
+          geo: new THREE.BoxGeometry(0.022, 0.0012, 0.01),
+          mat: MODEL_MATERIALS.panel,
+          x: -0.022 + i * 0.008,
+          y: sign * 0.019
+        })
+      );
+      group.add(
+        part({
+          geo: new THREE.BoxGeometry(0.022, 0.0016, 0.0008),
+          mat: MODEL_MATERIALS.silver,
+          x: -0.022 + i * 0.008,
+          y: sign * 0.013
+        })
+      );
+    }
+  }
+  return group;
+}
+
+/** Debris style 1: torn solar panel, broken rod, foil chunk. */
+function buildDebris1() {
+  const group = new THREE.Group();
+  const tornPanel = (radius: number, depth: number) => {
+    const shape = new THREE.Shape();
+    const points = 9;
+    for (let i = 0; i < points; i += 1) {
+      const angle = (i / points) * Math.PI * 2;
+      const r = radius * (0.68 + Math.random() * 0.5);
+      const x = Math.cos(angle) * r;
+      const y = Math.sin(angle) * r * 0.82;
+      if (i === 0) shape.moveTo(x, y);
+      else shape.lineTo(x, y);
+    }
+    shape.closePath();
+    const geometry = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, curveSegments: 1 });
+    geometry.center();
+    return geometry;
+  };
+  group.add(part({ geo: tornPanel(0.022, 0.0016), mat: MODEL_MATERIALS.panel, rx: 0.55, rz: 0.3 }));
+  group.add(part({ geo: tornPanel(0.016, 0.0012), mat: MODEL_MATERIALS.debris, x: 0.02, y: -0.012, z: 0.008, rx: -0.5, ry: 0.4, rz: 0.9 }));
+  group.add(link(new THREE.Vector3(-0.028, -0.01, 0.004), new THREE.Vector3(0.026, 0.02, -0.012), 0.0014, MODEL_MATERIALS.silver));
+  group.add(part({ geo: new THREE.DodecahedronGeometry(0.006, 0), mat: MODEL_MATERIALS.gold, x: -0.016, y: 0.014, z: -0.014, rx: 0.8 }));
+  return group;
+}
+
+/** Debris style 2: broken rocket stage section, bolt, antenna stub. */
+function buildDebris2() {
+  const group = new THREE.Group();
+  // Broken rocket tube section (white cylinder cut short).
+  group.add(part({ geo: new THREE.CylinderGeometry(0.012, 0.012, 0.03, 16), mat: MODEL_MATERIALS.white, rx: Math.PI / 2, ry: 0.3 }));
+  // Golden insulation band around one end.
+  group.add(part({ geo: new THREE.CylinderGeometry(0.0125, 0.0125, 0.006, 16), mat: MODEL_MATERIALS.gold, z: -0.014, rx: Math.PI / 2 }));
+  // Broken nozzle fragment on the end.
+  group.add(part({ geo: new THREE.ConeGeometry(0.008, 0.01, 10, 1, true), mat: MODEL_MATERIALS.dish, z: -0.03, rx: Math.PI / 2, ry: 0.3 }));
+  // A few loose bolts / washers.
+  for (let i = 0; i < 3; i += 1) {
+    group.add(
+      part({
+        geo: new THREE.CylinderGeometry(0.0016, 0.0016, 0.002, 6),
+        mat: MODEL_MATERIALS.silver,
+        x: (Math.random() - 0.5) * 0.04,
+        y: (Math.random() - 0.5) * 0.01,
+        z: (Math.random() - 0.5) * 0.02,
+        rx: Math.random() * Math.PI,
+        ry: Math.random() * Math.PI
+      })
+    );
+  }
+  // Antenna stub sticking out.
+  group.add(part({ geo: new THREE.CylinderGeometry(0.0006, 0.0006, 0.012, 4), mat: MODEL_MATERIALS.silver, x: 0.018, y: 0.008, rz: 0.6 }));
+  return group;
+}
+
+/** Debris style 3: crumpled MLI foil, electronics box, solar cell shard. */
+function buildDebris3() {
+  const group = new THREE.Group();
+  // Crumpled foil chunk: irregular box with gold material.
+  group.add(
+    part({
+      geo: new THREE.BoxGeometry(0.02, 0.012, 0.014),
+      mat: MODEL_MATERIALS.gold,
+      rx: 0.4,
+      ry: 0.6
+    })
+  );
+  // Small electronics box.
+  group.add(part({ geo: new THREE.BoxGeometry(0.007, 0.004, 0.006), mat: MODEL_MATERIALS.silver, x: -0.012, y: 0.008, z: 0.01, rx: 0.3, ry: 0.2 }));
+  // Solar cell shard (single cell from a panel).
+  group.add(part({ geo: new THREE.BoxGeometry(0.012, 0.001, 0.009), mat: MODEL_MATERIALS.panel, x: 0.022, y: -0.006, z: -0.005, rx: -0.7, ry: 0.5, rz: 0.8 }));
+  // Thin wire.
+  group.add(link(new THREE.Vector3(-0.005, 0.012, 0.005), new THREE.Vector3(0.008, 0.016, -0.003), 0.0004, MODEL_MATERIALS.silver));
+  return group;
+}
+
+export function createSatelliteModels(): Record<string, THREE.Group> {
   return {
-    payload: buildPayload(),
-    debris: buildDebris(),
-    rocket: buildRocket(),
-    unknown: buildUnknown()
+    [MODEL_KEYS.genericPayload]: buildPayload(),
+    [MODEL_KEYS.starlink]: buildStarlink(),
+    [MODEL_KEYS.iss]: buildISS(),
+    [MODEL_KEYS.debris1]: buildDebris1(),
+    [MODEL_KEYS.debris2]: buildDebris2(),
+    [MODEL_KEYS.debris3]: buildDebris3(),
+    [MODEL_KEYS.rocket]: buildRocket(),
+    [MODEL_KEYS.unknown]: buildUnknown()
   };
 }
 
-export function disposeSatelliteModels(models: Record<ObjectClass, THREE.Group>) {
+export function disposeSatelliteModels(models: Record<string, THREE.Group>) {
   // Materials and their textures are module-level singletons shared by every
   // mount (React Strict Mode mounts twice in development), so only the
   // per-build geometry is released here.

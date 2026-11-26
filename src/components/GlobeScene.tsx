@@ -27,6 +27,7 @@ import {
   ensureGlowCapacity,
   makeRingSprite,
   orbitalPeriodMinutes,
+  resolveModelKey,
   type GlowLayer,
   type InstancedGroups,
   type InstancedIndexEntry
@@ -223,8 +224,8 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
     groups: InstancedGroups;
     glow: GlowLayer;
     sunLight: THREE.DirectionalLight;
-    /** One detailed body per class, shown only while following. */
-    models: Record<ObjectClass, THREE.Group>;
+    /** One detailed body per resolved model key, shown only while following. */
+    models: Record<string, THREE.Group>;
     /** Small fill light that travels with the chase camera. */
     followLight: THREE.PointLight;
     idToIndex: Map<string, InstancedIndexEntry>;
@@ -673,9 +674,9 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
     const modelAttitudes = Object.fromEntries(
       Object.entries(MODEL_ATTITUDE).map(([type, angles]) => [
         type,
-        new THREE.Quaternion().setFromEuler(new THREE.Euler(angles[0], angles[1], angles[2]))
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(angles![0], angles![1], angles![2]))
       ])
-    ) as Partial<Record<ObjectClass, THREE.Quaternion>>;
+    ) as Partial<Record<string, THREE.Quaternion>>;
     for (const model of Object.values(models)) {
       model.visible = false;
       // Layer 1 is reserved for the close-up body, so the fill light below can
@@ -850,10 +851,11 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
       // Travelling "into" the screen, with the local zenith as camera up.
       const right = new THREE.Vector3().crossVectors(radial, forward).normalize();
 
+      const modelKey = resolveModelKey(entry.object);
       for (const model of Object.values(models)) model.visible = false;
-      models[entry.object.objectType].visible = true;
+      models[modelKey].visible = true;
 
-      const distance = MODEL_VIEW_DISTANCE[entry.object.objectType];
+      const distance = MODEL_VIEW_DISTANCE[modelKey] ?? MODEL_VIEW_DISTANCE.payload;
       const chaseOffset = new THREE.Vector3()
         .addScaledVector(forward, -Math.cos(FOLLOW_ELEVATION) * distance)
         .addScaledVector(radial, Math.sin(FOLLOW_ELEVATION) * distance);
@@ -1142,10 +1144,11 @@ export default forwardRef<GlobeSceneHandle, GlobeSceneProps>(function GlobeScene
           // Orient the body: +Y is the local zenith, +Z the direction of
           // travel, +X the orbit normal — the attitude a payload holds.
           followBasis.makeBasis(followRight, followRadial, followForward);
-          const model = models[entry.object.objectType];
+          const modelKey = resolveModelKey(entry.object);
+          const model = models[modelKey] ?? models.payload;
           model.position.copy(follow.smooth);
           model.quaternion.setFromRotationMatrix(followBasis);
-          const attitude = modelAttitudes[entry.object.objectType];
+          const attitude = modelAttitudes[modelKey];
           if (attitude) model.quaternion.multiply(attitude);
 
           // Orbiting the pivot must not sink the camera below the surface.
