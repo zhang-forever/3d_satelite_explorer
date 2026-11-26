@@ -22,7 +22,7 @@ RUN addgroup --system --gid 1001 nodejs \
     && mkdir -p /app/.cache/celestrak \
     && chown -R nextjs:nodejs /app/.cache
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/scripts/resume-source.cjs ./scripts/resume-source.cjs
+COPY --from=builder --chown=nextjs:nodejs /app/project/scripts/data/resume-source.cjs ./project/scripts/data/resume-source.cjs
 USER nextjs
 EXPOSE 3000
 CMD ["node", "server.js"]

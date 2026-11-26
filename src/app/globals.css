@@ -1,0 +1,10 @@
+/* Global stylesheet entry point. Partials are split by responsibility and
+   imported in cascade order; edit the partial rather than this file. */
+@import "./styles/base.css";
+@import "./styles/layout.css";
+@import "./styles/panels.css";
+@import "./styles/stage.css";
+@import "./styles/overlays.css";
+@import "./styles/theme.css";
+@import "./styles/navigation.css";
+@import "./styles/a11y.css";

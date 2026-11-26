@@ -1,0 +1,500 @@
+/*
+ * Visual theme layer.
+ *
+ * Inspired by three reference points in the satellite-tracking space:
+ *   - SatelliteMap.space: near-black canvas, hairline chrome, tiny labels
+ *   - NASA Eyes on the Earth: thin orbital accents, restrained color
+ *   - KeepTrack: dense, data-first telemetry typography
+ *
+ * Loaded after the structural partials so it can adjust surfaces and type
+ * without changing layout rules.
+ */
+
+:root {
+  --bg: #04060a;
+  --panel: rgba(8, 12, 18, 0.74);
+  --panel-strong: rgba(11, 16, 24, 0.94);
+  --line: rgba(148, 163, 184, 0.13);
+  --line-strong: rgba(148, 163, 184, 0.26);
+  --text: #e8eef6;
+  --muted: #8b9bb0;
+  --faint: #61728a;
+  --cyan: #7dd3fc;
+  --amber: #f3c776;
+  --rose: #f87171;
+  --green: #8ee6a8;
+  --mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", "Segoe UI Mono", Consolas, monospace;
+}
+
+html,
+body {
+  background: var(--bg);
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.004em;
+}
+
+strong,
+time,
+.metric span,
+.detail-grid strong,
+.status-row strong,
+.candidate-item small,
+.catalog-meta,
+.scan-anchor {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- shell and rails ---------------------------------------------------- */
+
+.app-shell {
+  background:
+    radial-gradient(1100px 680px at 50% 36%, rgba(32, 66, 96, 0.16), transparent 62%),
+    #04060a;
+}
+
+.sidebar,
+.inspector {
+  gap: 12px;
+  padding: 16px;
+  background: rgba(4, 7, 11, 0.82);
+  backdrop-filter: blur(14px) saturate(115%);
+  border-color: var(--line);
+}
+
+.sidebar::-webkit-scrollbar,
+.inspector::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sidebar::-webkit-scrollbar-thumb,
+.inspector::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.18);
+}
+
+.brand-mark {
+  width: 38px;
+  height: 38px;
+  border-radius: 6px;
+  border-color: rgba(125, 211, 252, 0.24);
+  background: rgba(125, 211, 252, 0.06);
+}
+
+.brand-copy h1 {
+  font-size: 15.5px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.brand-copy p {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.search-box {
+  min-height: 38px;
+  border-radius: 6px;
+  border-color: var(--line);
+  background: rgba(8, 12, 18, 0.9);
+  transition: border-color 0.14s ease;
+}
+
+.search-box:focus-within {
+  border-color: rgba(125, 211, 252, 0.42);
+}
+
+.search-box input::placeholder {
+  color: var(--faint);
+}
+
+/* ---- panels and section headers ---------------------------------------- */
+
+.panel {
+  padding: 12px;
+  border-radius: 8px;
+  border-color: var(--line);
+  background: var(--panel);
+  box-shadow: none;
+}
+
+.panel-title {
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.panel-title-main {
+  gap: 7px;
+}
+
+.panel-title-main svg {
+  color: var(--faint);
+}
+
+.panel-count {
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+.panel.collapsed .panel-title {
+  border-bottom-color: transparent;
+}
+
+/* ---- catalog list ------------------------------------------------------ */
+
+.catalog-list {
+  gap: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.06);
+}
+
+.catalog-item {
+  min-height: 52px;
+  padding: 9px 8px;
+  border: 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.06);
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.catalog-item:hover {
+  background: rgba(125, 211, 252, 0.04);
+}
+
+.catalog-item.active {
+  border-left-color: var(--group-color, var(--cyan));
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--group-color, var(--cyan)) 12%, transparent),
+    transparent 72%
+  );
+}
+
+.catalog-item small {
+  color: var(--faint);
+  font-size: 10.5px;
+}
+
+.catalog-item strong {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+/* The group colour lives on the row's left accent (see .active) instead of a
+   decorative dot, which read as a scatter of unrelated coloured beads. */
+.catalog-item.pending {
+  border-left-color: var(--group-color, var(--cyan));
+}
+
+.catalog-meta {
+  display: grid;
+  align-content: center;
+  justify-items: end;
+  gap: 2px;
+  padding-right: 2px;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+}
+
+.catalog-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.catalog-state svg {
+  color: var(--amber);
+}
+
+.catalog-state .spin {
+  color: var(--cyan);
+}
+
+.catalog-meta small {
+  color: var(--muted);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+}
+
+/* ---- controls ---------------------------------------------------------- */
+
+.icon-button,
+.text-button,
+.mini-button {
+  border-radius: 5px;
+  border-color: var(--line);
+  background: rgba(10, 15, 22, 0.72);
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.icon-button:hover,
+.text-button:hover,
+.mini-button:hover:not(:disabled) {
+  border-color: rgba(125, 211, 252, 0.38);
+  background: rgba(125, 211, 252, 0.06);
+  color: var(--cyan);
+}
+
+.text-button {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 11.5px;
+  letter-spacing: 0.03em;
+}
+
+.mini-button {
+  height: 24px;
+  padding: 0 8px;
+  color: var(--faint);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.segmented {
+  gap: 4px;
+}
+
+.segmented button {
+  min-height: 30px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--muted);
+  font-size: 11.5px;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.segmented button:hover {
+  background: rgba(125, 211, 252, 0.05);
+  color: var(--text);
+}
+
+.segmented button.active {
+  border-color: rgba(125, 211, 252, 0.3);
+  background: rgba(125, 211, 252, 0.08);
+  color: var(--cyan);
+}
+
+input[type="number"],
+select {
+  border-color: var(--line);
+  border-radius: 5px;
+  background: rgba(8, 12, 18, 0.9);
+  color: var(--text);
+}
+
+/* ---- stage chrome ------------------------------------------------------ */
+
+.topbar,
+.timeline {
+  padding: 8px;
+  gap: 8px;
+  border-color: var(--line);
+  border-radius: 8px;
+  background: rgba(5, 8, 13, 0.8);
+  backdrop-filter: blur(16px) saturate(115%);
+}
+
+.metric {
+  min-height: 32px;
+  padding: 0 11px;
+  border: 0;
+  border-right: 1px solid rgba(148, 163, 184, 0.08);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+}
+
+.metric:last-of-type {
+  border-right: 0;
+}
+
+.metric svg {
+  color: var(--faint);
+}
+
+.metric span {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.metric small {
+  color: var(--faint);
+  font-size: 9.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.metric.wide {
+  flex: 1;
+}
+
+.metric.wide span {
+  font-weight: 500;
+}
+
+.timeline select {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.range-label > span {
+  color: var(--faint);
+  font-size: 9.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+input[type="range"] {
+  accent-color: var(--cyan);
+}
+
+/* ---- legend, popup, overlays ------------------------------------------ */
+
+.legend {
+  padding: 9px 11px;
+  border-radius: 6px;
+  border-color: var(--line);
+  background: rgba(4, 7, 11, 0.72);
+  font-size: 10.5px;
+}
+
+.legend-title {
+  color: var(--faint);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+}
+
+.legend-dot {
+  width: 6px;
+  height: 6px;
+}
+
+.legend-line {
+  height: 1px;
+}
+
+.sat-popup-card {
+  border-color: var(--line-strong);
+  border-radius: 6px;
+  background: rgba(5, 8, 13, 0.92);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42);
+}
+
+.sat-popup-header {
+  font-size: 12px;
+  letter-spacing: 0.03em;
+}
+
+.sat-popup-row {
+  font-size: 10.5px;
+}
+
+.sat-popup-row span {
+  color: var(--faint);
+}
+
+.sat-popup-row strong {
+  font-family: var(--mono);
+  font-weight: 550;
+}
+
+.data-alert {
+  border-radius: 6px;
+  border-color: rgba(248, 113, 113, 0.32);
+  background: rgba(9, 6, 8, 0.9);
+  color: #fecaca;
+}
+
+.scene-vignette {
+  background: radial-gradient(circle at 50% 46%, transparent 54%, rgba(2, 4, 8, 0.52) 100%);
+}
+
+/* ---- detail and analysis rows ----------------------------------------- */
+
+.candidate-item {
+  border: 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.06);
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+}
+
+.candidate-item:hover {
+  background: rgba(125, 211, 252, 0.04);
+}
+
+.candidate-item.active {
+  border-left-color: var(--cyan);
+  background: rgba(125, 211, 252, 0.06);
+}
+
+.detail-grid {
+  gap: 8px 12px;
+  font-size: 12px;
+}
+
+.detail-grid span {
+  color: var(--faint);
+}
+
+.detail-grid strong {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.status-row {
+  padding: 7px 0;
+  border-top-color: rgba(148, 163, 184, 0.08);
+  font-size: 12px;
+}
+
+.status-row strong {
+  font-family: var(--mono);
+  font-weight: 500;
+}
+
+.pass-row,
+.hit-row {
+  border-color: rgba(148, 163, 184, 0.08);
+}
+
+.pass-row-head strong,
+.hit-row-summary strong {
+  font-family: var(--mono);
+  font-weight: 550;
+}
+
+.empty-state {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.error-text {
+  color: #fca5a5;
+  font-size: 11.5px;
+}
+
+/* Filter chips read better as 3 + 2 than 2 + 2 + 1 in the narrow rail. */
+.filter-panel .segmented {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.catalog-item small {
+  font-size: 11px;
+}
